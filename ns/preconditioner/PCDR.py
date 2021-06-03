@@ -10,7 +10,7 @@ class PCDR(PCBase):
     # https://fenapack.readthedocs.io/en/2019.1.0/math.html#math-background-pcdr-extension
     # Follows the X_{BRM2} form of
     # S^{-1} \approx R_p^{-1} + A_p^{-1} K_p M_p^{-1} (FEniCS has an identity matrix in there, not sure why...)
-    # where R_p \approx dt B D_M B^T,
+    # where R_p \approx dt B D_M^{-1} B^T,
     # B^T is the pressure gradient operator,
     # D_M = diag(M_u) = diagonal of the velocity mass matrix
     # K_p is the pressure convection matrix
@@ -24,7 +24,6 @@ class PCDR(PCBase):
     needs_python_pmat = True
         
     def initialize(self, pc):
-        print('initialize')
         _, P = pc.getOperators()
         opc = pc
         appctx = self.get_appctx(pc)

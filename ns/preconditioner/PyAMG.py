@@ -14,7 +14,6 @@ class PyAMG(PCBase):
         _, P = pc.getOperators()
 
         if pc.getType() != "python":
-            print('Expecting PC type python')
             raise ValueError("Expecting PC type python")
         opc = pc
         appctx = self.get_appctx(pc)
@@ -33,7 +32,6 @@ class PyAMG(PCBase):
             # It only makes sense to preconditioner/invert a diagonal
             # block in general.  That's all we're going to allow.
             if not context.on_diag:
-                print('Only makes sense to invert diagonal block')
                 raise ValueError("Only makes sense to invert diagonal block")
 
         prefix = pc.getOptionsPrefix()

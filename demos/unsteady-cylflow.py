@@ -7,7 +7,6 @@ import sys
 import os
 
 sys.path.append(os.path.dirname(os.getcwd()))
-
 import ns
 
 save_frames = False
@@ -85,9 +84,9 @@ solver_params = {
     
     "fieldsplit_1_ksp_type": "gmres",
     "fieldsplit_1_ksp_rtol": 1e-8,
-    "fieldsplit_1_pc_type": "jacobi", # testing...
-#    "fieldsplit_1_pc_type": "python",
-#    "fieldsplit_1_pc_python_type": "ns.preconditioner.PCDR",
+    # "fieldsplit_1_pc_type": "jacobi", # testing...
+    "fieldsplit_1_pc_type": "python",
+    "fieldsplit_1_pc_python_type": "ns.preconditioner.PCDR",
 }
 
 up0.assign(up)
