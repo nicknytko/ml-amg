@@ -72,6 +72,7 @@ solver_params = {
     "ksp_gmres_modifiedgramschmidt": None,
     "ksp_monitor_true_residual": None,
     "snes_monitor": None,
+    "ksp_view": None,
 
     "mat_type": "matfree",
     "pc_fieldsplit_type": "schur",
@@ -80,13 +81,20 @@ solver_params = {
 
     "fieldsplit_0_ksp_type": "gmres",
     "fieldsplit_0_pc_type": "python",
-    "fieldsplit_0_pc_python_type": "ns.preconditioner.PyAMG",
+    #"fieldsplit_0_pc_python_type": "ns.preconditioner.PyAMG",
+    "fieldsplit_0_pc_type": "jacobi",
     
     "fieldsplit_1_ksp_type": "gmres",
     "fieldsplit_1_ksp_rtol": 1e-8,
     # "fieldsplit_1_pc_type": "jacobi", # testing...
     "fieldsplit_1_pc_type": "python",
     "fieldsplit_1_pc_python_type": "ns.preconditioner.PCDR",
+    "fieldsplit_1_pcdr_Kp_pc_type": "lu",
+    "fieldsplit_1_pcdr_Kp_pc_factor_mat_solver_type": "mumps",
+    "fieldsplit_1_pcdr_Rp_pc_type": "lu",
+    "fieldsplit_1_pcdr_Rp_pc_factor_mat_solver_type": "mumps",
+    "fieldsplit_1_pcdr_Mp_pc_type": "lu",
+    "fieldsplit_1_pcdr_Mp_pc_factor_mat_solver_type": "mumps",
 }
 
 up0.assign(up)

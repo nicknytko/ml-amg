@@ -4,6 +4,8 @@ from firedrake.assemble import allocate_matrix, assemble
 import scipy.sparse as sp
 import functools
 import matplotlib.pyplot as plt
+import numpy as np
+import ns.lib.petsc
 
 class PCDR(PCBase):
     # Loosely based on the PCDR preconditioner from FEniCS
@@ -20,10 +22,16 @@ class PCDR(PCBase):
 
     # This reuses a lot of code from the existing Firedrake PCD preconditioner
     
-    _prefix = 'pcdr'
+    _prefix = 'pcdr_'
     needs_python_pmat = True
-        
+
     def initialize(self, pc):
+        try:
+            self._initialize(pc)
+        except Exception as e:
+            print(e)
+    
+    def _initialize(self, pc):
         _, P = pc.getOperators()
         opc = pc
         appctx = self.get_appctx(pc)
@@ -38,11 +46,10 @@ class PCDR(PCBase):
         trial = TrialFunction(V)
 
         # Grab relevant options
-        prefix = pc.getOptionsPrefix()
-        options_prefix = prefix + self._prefix
+        prefix = pc.getOptionsPrefix() + self._prefix
 
         opts = PETSc.Options()
-        mat_type = opts.getString(f'{options_prefix}_mat_type', "aij")
+        mat_type = opts.getString(f'{prefix}_mat_type', "aij")
         Re = appctx.get('Re', 1.0)
         dt = appctx.get('dt', 1.0)
         velid = appctx.get('velocity_space', 0)
@@ -103,7 +110,7 @@ class PCDR(PCBase):
         self.Fp = allocate_matrix(fp,
                                   form_compiler_parameters=fcp,
                                   mat_type=self.Fp_mat_type,
-                                  options_prefix=options_prefix + "Fp_")
+                                  options_prefix=prefix + "Fp_")
 
         self._assemble_Fp = functools.partial(assemble,
                                               fp,
@@ -128,6 +135,7 @@ class PCDR(PCBase):
         Mumat = Mu.petscmat
         Dvec = Mumat.createVecLeft()
         Mumat.getDiagonal(Dvec)
+        Dry = np.array(Dvec.array_r)
         Dvec.reciprocal()
         Dvec.sqrtabs()
 
@@ -154,9 +162,18 @@ class PCDR(PCBase):
         self.workspace = [Fpmat.createVecLeft() for i in range(4)]
         
     def update(self, pc):
-        self._assemble_Fp()
-        
+        try:
+            self._assemble_Fp()
+        except Exception as e:
+            print(e)
+
     def apply(self, pc, X, Y):
+        try:
+            self._apply(pc,X,Y)
+        except Exception as e:
+            print(e)
+        
+    def _apply(self, pc, X, Y):
         MinvX, FMinvX, Pcd, R = self.workspace
 
         self.Mksp.solve(X, MinvX)
@@ -167,6 +184,8 @@ class PCDR(PCBase):
 
         pcdr = Pcd + R
         pcdr.copy(Y)
+        Y.scale(-1.0)
 
     def applyTranspose(self, pc, X, Y):
+        print('applyTranspose() called! This is not implemented!!')
         pass
