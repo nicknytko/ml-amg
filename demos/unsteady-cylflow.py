@@ -32,7 +32,7 @@ v, q = TestFunctions(TaylorHood)
 
 # Constants
 # "True" reynolds number
-Re_t = 500.0 
+Re_t = 500.0
 U_r = 2 # Inlet velocity
 L_r = 4 # Inlet width
 # Re_{eff} = Re / (U_r L_r)
@@ -71,6 +71,7 @@ solver_params = {
     "ksp_type": "gmres",
     "ksp_gmres_modifiedgramschmidt": None,
     "ksp_monitor_true_residual": None,
+    "ksp_converged_reason": None,
     "snes_monitor": None,
     "ksp_view": None,
 
@@ -79,22 +80,26 @@ solver_params = {
     "pc_fieldsplit_schur_fact_type": "lower",
     "pc_type": "fieldsplit",
 
-    "fieldsplit_0_ksp_type": "gmres",
-    "fieldsplit_0_pc_type": "python",
+    #"fieldsplit_0_ksp_type": "preonly",
+    #"fieldsplit_0_pc_type": "python",
+    #"fieldsplit_0_pc_type": "lu",
+    #"fieldsplit_0_pc_factor_mat_solver_type": "mumps",
     #"fieldsplit_0_pc_python_type": "ns.preconditioner.PyAMG",
-    "fieldsplit_0_pc_type": "jacobi",
-    
+
     "fieldsplit_1_ksp_type": "gmres",
     "fieldsplit_1_ksp_rtol": 1e-8,
-    # "fieldsplit_1_pc_type": "jacobi", # testing...
+    #"fieldsplit_1_pc_type": "jacobi", # testing...
     "fieldsplit_1_pc_type": "python",
     "fieldsplit_1_pc_python_type": "ns.preconditioner.PCDR",
     "fieldsplit_1_pcdr_Kp_pc_type": "lu",
     "fieldsplit_1_pcdr_Kp_pc_factor_mat_solver_type": "mumps",
+    "fieldsplit_1_pcdr_Kp_ksp_type": "preonly",
     "fieldsplit_1_pcdr_Rp_pc_type": "lu",
     "fieldsplit_1_pcdr_Rp_pc_factor_mat_solver_type": "mumps",
+    "fieldsplit_1_pcdr_Rp_ksp_type": "preonly",
     "fieldsplit_1_pcdr_Mp_pc_type": "lu",
     "fieldsplit_1_pcdr_Mp_pc_factor_mat_solver_type": "mumps",
+    "fieldsplit_1_pcdr_Mp_ksp_type": "preonly",
 }
 
 up0.assign(up)
@@ -109,14 +114,13 @@ for i in range(1, n_t+1):
     solve(F == 0, up, bcs=bcs_U, solver_parameters=solver_params, appctx=appctx)
     up0.assign(up)
     print('timestep', i)
-    
+
     plt.clf()
     u,p = up.split()
     tripcolor(u, cmap='plasma', axes=plt.gca(), vmin=vmin, vmax=vmax)
     plt.title(f't={dt*i:.3f}')
     plt.gca().set_aspect('equal')
     plt.pause(0.01)
-    
+
     if save_frames:
         plt.savefig(f'frames/ns_{i:03d}.png', dpi=200)
-

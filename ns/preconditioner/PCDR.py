@@ -5,7 +5,10 @@ import scipy.sparse as sp
 import functools
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.linalg as la
 import ns.lib.petsc
+
+pcdr_iter = 0
 
 class PCDR(PCBase):
     # Loosely based on the PCDR preconditioner from FEniCS
@@ -21,7 +24,7 @@ class PCDR(PCBase):
     # dt is the timestep
 
     # This reuses a lot of code from the existing Firedrake PCD preconditioner
-    
+
     _prefix = 'pcdr_'
     needs_python_pmat = True
 
@@ -30,7 +33,7 @@ class PCDR(PCBase):
             self._initialize(pc)
         except Exception as e:
             print(e)
-    
+
     def _initialize(self, pc):
         _, P = pc.getOperators()
         opc = pc
@@ -56,15 +59,15 @@ class PCDR(PCBase):
         self.Re = Re
         self.dt = dt
         self.velid = velid
-        
+
         # Assemble operators
         context = P.getPythonContext()
         test, trial = context.a.arguments()
         if test.function_space() != trial.function_space():
             raise ValueError("Pressure space test and trial space differ")
-        
+
         Q = test.function_space()
-        
+
         p = TrialFunction(Q)
         q = TestFunction(Q)
 
@@ -105,7 +108,7 @@ class PCDR(PCBase):
         # Get current state
         state = appctx['state']
         u0 = split(state)[velid]
-        fp = 1.0/Re * inner(grad(p), grad(q))*dx + inner(u0, grad(p))*q*dx
+        fp = 1.0/Re * inner(grad(p), grad(q))*dx + inner(u0, grad(p))*q*dx# + (1.0/dt)*p*q*dx
 
         self.Fp = allocate_matrix(fp,
                                   form_compiler_parameters=fcp,
@@ -157,10 +160,10 @@ class PCDR(PCBase):
         Rksp.setUp()
         Rksp.setFromOptions()
         self.Rksp = Rksp
-            
+
         # Create scratch vectors to hold intermediate computations
         self.workspace = [Fpmat.createVecLeft() for i in range(4)]
-        
+
     def update(self, pc):
         try:
             self._assemble_Fp()
@@ -172,7 +175,10 @@ class PCDR(PCBase):
             self._apply(pc,X,Y)
         except Exception as e:
             print(e)
-        
+        global pcdr_iter
+        print("pcdr_iter", pcdr_iter)
+        pcdr_iter += 1
+
     def _apply(self, pc, X, Y):
         MinvX, FMinvX, Pcd, R = self.workspace
 
@@ -182,10 +188,22 @@ class PCDR(PCBase):
 
         self.Rksp.solve(X, R)
 
+#        Pcd.copy(Y)
         pcdr = Pcd + R
         pcdr.copy(Y)
-        Y.scale(-1.0)
 
     def applyTranspose(self, pc, X, Y):
-        print('applyTranspose() called! This is not implemented!!')
+        print('calling apply transpose!!!!')
         pass
+
+    def view(self, pc, viewer=None):
+        super(PCDR, self).view(pc, viewer)
+        viewer.printfASCII("Pressure-Convection-Diffusion-Reaction inverse K^-1 F_p M^-1:\n")
+        viewer.printfASCII("Reynolds number in F_p (applied matrix-free) is %s\n" %
+                           str(self.Re))
+        viewer.printfASCII("KSP solver for K^-1:\n")
+        self.Kksp.view(viewer)
+        viewer.printfASCII("KSP solver for M^-1:\n")
+        self.Mksp.view(viewer)
+        viewer.printfASCII('KSP solver for R^-1:\n')
+        self.Rksp.view(viewer)
