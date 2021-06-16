@@ -76,6 +76,7 @@ solver_params = {
     # "ksp_monitor_true_residual": None,
     # "ksp_monitor": None,
     # "snes_monitor": None,
+    # "ksp_view": None,
 
     # Use PETSC's fieldsplit preconditioner to "invert" the matrix blocks
     "mat_type": "matfree",
@@ -87,19 +88,24 @@ solver_params = {
     "fieldsplit_0_pc_type": "python",
     "fieldsplit_0_ksp_type": "preonly",
     "fieldsplit_0_pc_python_type": "firedrake.AssembledPC",
-    "fieldsplit_0_assembled_pc_type": "lu",
-    "fieldsplit_0_assembled_pc_factor_mat_solver_type": "mumps",
-    "fieldsplit_0_ksp_rtol": 1e-8,
+    "fieldsplit_0_assembled_pc_type": "python",
+    "fieldsplit_0_assembled_pc_python_type": "ns.preconditioner.PyAMG",
+    "fieldsplit_0_assembled_pyamg_amg_rtol": 1e-8,
 
     # Schur complement
     "fieldsplit_1_ksp_type": "preonly",
-    "fieldsplit_1_ksp_rtol": 1e-8,
     "fieldsplit_1_pc_type": "python",
     "fieldsplit_1_pc_python_type": "ns.preconditioner.PCDR",  # Our nice PCD-R preconditioner :)
 
     # Pressure laplacian
     "fieldsplit_1_pcdr_Kp_pc_type": "lu",
     "fieldsplit_1_pcdr_Kp_ksp_type": "preonly",
+    # Trying to use PyAMG crashes here.  Need to investigate why.
+    # "fieldsplit_1_pcdr_Kp_ksp_type": "preonly",
+    # "fieldsplit_1_pcdr_Kp_pc_type": "python",
+    # "fieldsplit_1_pcdr_Kp_pc_python_type": "firedrake.AssembledPC",
+    # "fieldsplit_1_pcdr_Kp_assembled_pc_type": "python",
+    # "fieldsplit_1_pcdr_Kp_assembled_pc_python_type": "ns.preconditioner.PyAMG",
 
     # Reaction
     "fieldsplit_1_pcdr_Rp_pc_type": "lu",

@@ -5,6 +5,8 @@ import pyamg
 import scipy.sparse as sp
 import functools
 import matplotlib.pyplot as plt
+import scipy.io as sio
+
 
 class PyAMG(PCBase):
     _prefix = "pyamg_"
@@ -36,6 +38,8 @@ class PyAMG(PCBase):
 
         prefix = pc.getOptionsPrefix()
         options_prefix = prefix + self._prefix
+        opts = PETSc.Options()
+        self.amg_rtol = opts.getScalar(f'{options_prefix}amg_rtol', 1e-8)
 
         mat_type = PETSc.Options().getString(options_prefix + "mat_type", "aij")
 
@@ -52,12 +56,17 @@ class PyAMG(PCBase):
                                              form_compiler_parameters=fcp,
                                              mat_type=mat_type)
 
-        self._assemble_P()
-        self._createAmgSolver(pc)
+        self.update(pc)
+
+    _matidx = 0
+    def dump_mat(self, pc, csr):
+        prefix = pc.getOptionsPrefix() + self._prefix
+        sio.savemat(f'../out_matrices/{prefix}mat_{self._matidx:04}.mat', {'A': csr})
+        self._matidx += 1
 
     def _createAmgSolver(self, pc):
         _, P = pc.getOperators()
-        
+
         # Transfer nullspace over
         Pmat = self.P.petscmat
         Pmat.setNullSpace(P.getNullSpace())
@@ -69,8 +78,9 @@ class PyAMG(PCBase):
         # Create PyAMG solver from CSR matrix
         row, col, val = Pmat.getValuesCSR()
         self.Pcsr = sp.csr_matrix((val, col, row))
-        self.Amg = pyamg.ruge_stuben_solver(self.Pcsr)        
-        
+        self.Amg = pyamg.ruge_stuben_solver(self.Pcsr)
+        self.dump_mat(pc, self.Pcsr)
+
     def update(self, pc):
         self._assemble_P()
         self._createAmgSolver(pc)
@@ -85,8 +95,14 @@ class PyAMG(PCBase):
             return (context.Jp or context.J, context._problem.bcs)
 
     def apply(self, pc, X, Y):
-        y = self.Amg.solve(X.array_r, tol=1e-6) # todo: make the tolerance a petsc option
+        y = self.Amg.solve(X.array_r, tol=self.amg_rtol)
         Y.setArray(y)
 
     def applyTranspose(self, pc, X, Y):
         pass
+
+    def view(self, pc, viewer=None):
+        super(PyAMG, self).view(pc, viewer)
+        viewer.printfASCII( 'PyAMG Solver:\n')
+        viewer.printfASCII(f' amg solver: {str(self.Amg)}\n')
+        viewer.printfASCII(f' amg rtol: {self.amg_rtol}\n')
