@@ -5,6 +5,7 @@ import scipy.sparse as sp
 import scipy.io as sio
 import sys
 import os
+import time
 
 sys.path.append(os.path.dirname(os.getcwd()))
 import ns
@@ -71,9 +72,10 @@ appctx = {
 }
 solver_params = {
     "ksp_type": "gmres",
-    "ksp_monitor_true_residual": None,
-    "ksp_monitor": None,
-    "snes_monitor": None,
+    # Debug output, uncomment if you want to see SNES and linear solve residuals
+    # "ksp_monitor_true_residual": None,
+    # "ksp_monitor": None,
+    # "snes_monitor": None,
 
     # Use PETSC's fieldsplit preconditioner to "invert" the matrix blocks
     "mat_type": "matfree",
@@ -82,30 +84,29 @@ solver_params = {
     "pc_type": "fieldsplit",
 
     # Momentum block
+    "fieldsplit_0_pc_type": "python",
+    "fieldsplit_0_ksp_type": "preonly",
     "fieldsplit_0_pc_python_type": "firedrake.AssembledPC",
     "fieldsplit_0_assembled_pc_type": "lu",
     "fieldsplit_0_assembled_pc_factor_mat_solver_type": "mumps",
     "fieldsplit_0_ksp_rtol": 1e-8,
 
     # Schur complement
-    "fieldsplit_1_ksp_type": "gmres",
+    "fieldsplit_1_ksp_type": "preonly",
     "fieldsplit_1_ksp_rtol": 1e-8,
     "fieldsplit_1_pc_type": "python",
     "fieldsplit_1_pc_python_type": "ns.preconditioner.PCDR",  # Our nice PCD-R preconditioner :)
 
     # Pressure laplacian
     "fieldsplit_1_pcdr_Kp_pc_type": "lu",
-    "fieldsplit_1_pcdr_Kp_pc_factor_mat_solver_type": "mumps",
     "fieldsplit_1_pcdr_Kp_ksp_type": "preonly",
 
     # Reaction
     "fieldsplit_1_pcdr_Rp_pc_type": "lu",
-    "fieldsplit_1_pcdr_Rp_pc_factor_mat_solver_type": "mumps",
     "fieldsplit_1_pcdr_Rp_ksp_type": "preonly",
 
     # Pressure mass
     "fieldsplit_1_pcdr_Mp_pc_type": "lu",
-    "fieldsplit_1_pcdr_Mp_pc_factor_mat_solver_type": "mumps",
     "fieldsplit_1_pcdr_Mp_ksp_type": "preonly",
 
     # Pressure convection-diffusion matrix
@@ -120,10 +121,12 @@ n_t = int(T / dt)
 vmin = 0
 vmax = 8
 
+start_time = time.time()
+
 for i in range(1, n_t+1):
     solve(F == 0, up, bcs=bcs_U, solver_parameters=solver_params, appctx=appctx)
     up0.assign(up)
-    print('timestep', i)
+    print(f'Timestep {i:03} -- elapsed {time.time()-start_time:.2f}s')
 
     plt.clf()
     u,p = up.split()
