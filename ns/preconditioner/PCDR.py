@@ -81,7 +81,6 @@ class PCDR(PCBase):
         Mu_mat_type = opts.getString(prefix+"Mu_mat_type", default)
         self.Fp_mat_type = opts.getString(prefix+"Fp_mat_type", "matfree")
 
-
         Mp = assemble(mass, form_compiler_parameters=context.fc_params,
                       mat_type=Mp_mat_type,
                       options_prefix=prefix + "Mp_")
@@ -108,7 +107,7 @@ class PCDR(PCBase):
         # Get current state
         state = appctx['state']
         u0 = split(state)[velid]
-        fp = 1.0/Re * inner(grad(p), grad(q))*dx + inner(u0, grad(p))*q*dx# + (1.0/dt)*p*q*dx
+        fp = 1.0/Re * inner(grad(p), grad(q))*dx + inner(u0, grad(p))*q*dx
 
         self.Fp = allocate_matrix(fp,
                                   form_compiler_parameters=fcp,
@@ -175,9 +174,6 @@ class PCDR(PCBase):
             self._apply(pc,X,Y)
         except Exception as e:
             print(e)
-        global pcdr_iter
-        print("pcdr_iter", pcdr_iter)
-        pcdr_iter += 1
 
     def _apply(self, pc, X, Y):
         MinvX, FMinvX, Pcd, R = self.workspace
@@ -190,6 +186,9 @@ class PCDR(PCBase):
 
 #        Pcd.copy(Y)
         pcdr = Pcd + R
+        pcdrv = np.array(pcdr.array_r)
+        if np.any(np.isnan(pcdrv)):
+            print('output has NaN values!')
         pcdr.copy(Y)
 
     def applyTranspose(self, pc, X, Y):

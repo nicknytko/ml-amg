@@ -12,7 +12,7 @@ import ns
 save_frames = False
 
 M = Mesh('../mesh/wide_cyl_small.msh') # Using low-res mesh for testing
-# M = Mesh('../mesh/wide_cyl.msh')
+#M = Mesh('../mesh/wide_cyl.msh')
 x, y = SpatialCoordinate(M)
 print('Vertices in Mesh', M.num_vertices())
 print('Edges in mesh', M.num_edges())
@@ -58,6 +58,8 @@ bcs_U = [
     DirichletBC(TaylorHood.sub(0), Constant((5, 0)), [6]), # Inlet velocity = (1,0)
     DirichletBC(TaylorHood.sub(0), Constant((0, 0)), [8])  # No-slip walls
 ]
+nullspace = MixedVectorSpaceBasis(
+    TaylorHood, [TaylorHood.sub(0), VectorSpaceBasis(constant=True)])
 
 appctx = {
     'Re': Re,
@@ -69,37 +71,45 @@ appctx = {
 }
 solver_params = {
     "ksp_type": "gmres",
-    "ksp_gmres_modifiedgramschmidt": None,
     "ksp_monitor_true_residual": None,
-    "ksp_converged_reason": None,
+    "ksp_monitor": None,
     "snes_monitor": None,
-    "ksp_view": None,
 
+    # Use PETSC's fieldsplit preconditioner to "invert" the matrix blocks
     "mat_type": "matfree",
     "pc_fieldsplit_type": "schur",
     "pc_fieldsplit_schur_fact_type": "lower",
     "pc_type": "fieldsplit",
 
-    #"fieldsplit_0_ksp_type": "preonly",
-    #"fieldsplit_0_pc_type": "python",
-    #"fieldsplit_0_pc_type": "lu",
-    #"fieldsplit_0_pc_factor_mat_solver_type": "mumps",
-    #"fieldsplit_0_pc_python_type": "ns.preconditioner.PyAMG",
+    # Momentum block
+    "fieldsplit_0_pc_python_type": "firedrake.AssembledPC",
+    "fieldsplit_0_assembled_pc_type": "lu",
+    "fieldsplit_0_assembled_pc_factor_mat_solver_type": "mumps",
+    "fieldsplit_0_ksp_rtol": 1e-8,
 
+    # Schur complement
     "fieldsplit_1_ksp_type": "gmres",
     "fieldsplit_1_ksp_rtol": 1e-8,
-    #"fieldsplit_1_pc_type": "jacobi", # testing...
     "fieldsplit_1_pc_type": "python",
-    "fieldsplit_1_pc_python_type": "ns.preconditioner.PCDR",
+    "fieldsplit_1_pc_python_type": "ns.preconditioner.PCDR",  # Our nice PCD-R preconditioner :)
+
+    # Pressure laplacian
     "fieldsplit_1_pcdr_Kp_pc_type": "lu",
     "fieldsplit_1_pcdr_Kp_pc_factor_mat_solver_type": "mumps",
     "fieldsplit_1_pcdr_Kp_ksp_type": "preonly",
+
+    # Reaction
     "fieldsplit_1_pcdr_Rp_pc_type": "lu",
     "fieldsplit_1_pcdr_Rp_pc_factor_mat_solver_type": "mumps",
     "fieldsplit_1_pcdr_Rp_ksp_type": "preonly",
+
+    # Pressure mass
     "fieldsplit_1_pcdr_Mp_pc_type": "lu",
     "fieldsplit_1_pcdr_Mp_pc_factor_mat_solver_type": "mumps",
     "fieldsplit_1_pcdr_Mp_ksp_type": "preonly",
+
+    # Pressure convection-diffusion matrix
+    "fieldsplit_1_pcdr_Fp_mat_type": "matfree",
 }
 
 up0.assign(up)

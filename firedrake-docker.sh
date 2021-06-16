@@ -1,2 +1,2 @@
 #!/bin/bash
-docker run -it --rm -e DISPLAY=host.docker.internal:0 -v $(pwd):/src nicknytko/firedrake /bin/zsh
+docker run -it --rm -e DISPLAY=$DISPLAY -v $(pwd):/src -v /tmp/.X11-unix:/tmp/.X11-unix nicknytko/firedrake /bin/zsh
