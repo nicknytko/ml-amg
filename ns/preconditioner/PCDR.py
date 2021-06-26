@@ -176,20 +176,15 @@ class PCDR(PCBase):
             print(e)
 
     def _apply(self, pc, X, Y):
-        MinvX, FMinvX, Pcd, R = self.workspace
+        MinvX, FMinvX, R2, R = self.workspace
 
         self.Mksp.solve(X, MinvX)
         self.Fp.petscmat.mult(MinvX, FMinvX)
-        self.Kksp.solve(FMinvX, Pcd)
+        self.Kksp.solve(FMinvX, Y)
 
+        # Now add the reaction term
         self.Rksp.solve(X, R)
-
-#        Pcd.copy(Y)
-        pcdr = Pcd + R
-        pcdrv = np.array(pcdr.array_r)
-        if np.any(np.isnan(pcdrv)):
-            print('output has NaN values!')
-        pcdr.copy(Y)
+        Y.axpy(1.0, R)
 
     def applyTranspose(self, pc, X, Y):
         print('calling apply transpose!!!!')

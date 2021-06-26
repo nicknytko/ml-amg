@@ -70,6 +70,9 @@ appctx = {
     'velocity_functions': [u, v],
     'velocity_bcs': bcs_U
 }
+solver_params_gmres_only = {
+    "ksp_type": "gmres"
+}
 solver_params = {
     "ksp_type": "gmres",
     # Debug output, uncomment if you want to see SNES and linear solve residuals
@@ -100,18 +103,23 @@ solver_params = {
     # Pressure laplacian
     "fieldsplit_1_pcdr_Kp_pc_type": "lu",
     "fieldsplit_1_pcdr_Kp_ksp_type": "preonly",
+    "fieldsplit_1_pcdr_Kp_pc_factor_type": "mumps",
     # Trying to use PyAMG crashes here.  Need to investigate why.
     # "fieldsplit_1_pcdr_Kp_ksp_type": "preonly",
     # "fieldsplit_1_pcdr_Kp_pc_type": "python",
     # "fieldsplit_1_pcdr_Kp_pc_python_type": "firedrake.AssembledPC",
     # "fieldsplit_1_pcdr_Kp_assembled_pc_type": "python",
     # "fieldsplit_1_pcdr_Kp_assembled_pc_python_type": "ns.preconditioner.PyAMG",
+    # "fieldsplit_1_pcdr_Kp_assembled_pc_type": "lu",
 
-    # Reaction
+    # reaction
     "fieldsplit_1_pcdr_Rp_pc_type": "lu",
     "fieldsplit_1_pcdr_Rp_ksp_type": "preonly",
 
     # Pressure mass
+    # "fieldsplit_1_pcdr_Mp_pc_type": "python",
+    # "fieldsplit_1_pcdr_Mp_mat_type": "aij",
+    # "fieldsplit_1_pcdr_Mp_pc_python_type": "ns.preconditioner.PyAMG",
     "fieldsplit_1_pcdr_Mp_pc_type": "lu",
     "fieldsplit_1_pcdr_Mp_ksp_type": "preonly",
 
