@@ -9,11 +9,12 @@ import time
 
 sys.path.append(os.path.dirname(os.getcwd()))
 import ns
+import ns.preconditioner.PyAMG
 
 save_frames = False
 
-M = Mesh('../mesh/wide_cyl_small.msh') # Using low-res mesh for testing
-#M = Mesh('../mesh/wide_cyl.msh')
+#M = Mesh('../mesh/wide_cyl_small.msh') # Using low-res mesh for testing
+M = Mesh('../mesh/wide_cyl_medium.msh')
 x, y = SpatialCoordinate(M)
 print('Vertices in Mesh', M.num_vertices())
 print('Edges in mesh', M.num_edges())
@@ -40,6 +41,7 @@ L_r = 4 # Inlet width
 # "effective" reynolds number.  Since I'm lazy, just take above
 # and divide by U_rL_r so we just need to take inverse in formulation
 Re = Re_t / (U_r * L_r)
+print('Re', Re_t, '"Effective" Re', Re)
 Re_inv = Constant(1.0/Re)
 dt = 0.005
 dt_inv = Constant(1.0/dt)
@@ -74,12 +76,14 @@ solver_params_gmres_only = {
     "ksp_type": "gmres"
 }
 solver_params = {
-    "ksp_type": "gmres",
+    "ksp_type": "fgmres",
+    "ksp_gmres_modifiedgramschmidt": None,
+    "ksp_gmres_restart": 100,
     # Debug output, uncomment if you want to see SNES and linear solve residuals
     # "ksp_monitor_true_residual": None,
-    # "ksp_monitor": None,
-    # "snes_monitor": None,
-    # "ksp_view": None,
+    "ksp_monitor": None,
+    "snes_monitor": None,
+    #"ksp_view": None,
 
     # Use PETSC's fieldsplit preconditioner to "invert" the matrix blocks
     "mat_type": "matfree",
@@ -90,7 +94,9 @@ solver_params = {
     # Momentum block
     "fieldsplit_0_pc_type": "python",
     "fieldsplit_0_ksp_type": "preonly",
+    #"fieldsplit_0_ksp_type": "gmres",
     "fieldsplit_0_pc_python_type": "firedrake.AssembledPC",
+    #"fieldsplit_0_assembled_pc_type": "lu",
     "fieldsplit_0_assembled_pc_type": "python",
     "fieldsplit_0_assembled_pc_python_type": "ns.preconditioner.PyAMG",
     "fieldsplit_0_assembled_pyamg_amg_rtol": 1e-8,
@@ -103,23 +109,12 @@ solver_params = {
     # Pressure laplacian
     "fieldsplit_1_pcdr_Kp_pc_type": "lu",
     "fieldsplit_1_pcdr_Kp_ksp_type": "preonly",
-    "fieldsplit_1_pcdr_Kp_pc_factor_type": "mumps",
-    # Trying to use PyAMG crashes here.  Need to investigate why.
-    # "fieldsplit_1_pcdr_Kp_ksp_type": "preonly",
-    # "fieldsplit_1_pcdr_Kp_pc_type": "python",
-    # "fieldsplit_1_pcdr_Kp_pc_python_type": "firedrake.AssembledPC",
-    # "fieldsplit_1_pcdr_Kp_assembled_pc_type": "python",
-    # "fieldsplit_1_pcdr_Kp_assembled_pc_python_type": "ns.preconditioner.PyAMG",
-    # "fieldsplit_1_pcdr_Kp_assembled_pc_type": "lu",
 
     # reaction
     "fieldsplit_1_pcdr_Rp_pc_type": "lu",
     "fieldsplit_1_pcdr_Rp_ksp_type": "preonly",
 
     # Pressure mass
-    # "fieldsplit_1_pcdr_Mp_pc_type": "python",
-    # "fieldsplit_1_pcdr_Mp_mat_type": "aij",
-    # "fieldsplit_1_pcdr_Mp_pc_python_type": "ns.preconditioner.PyAMG",
     "fieldsplit_1_pcdr_Mp_pc_type": "lu",
     "fieldsplit_1_pcdr_Mp_ksp_type": "preonly",
 
@@ -136,8 +131,10 @@ vmin = 0
 vmax = 8
 
 start_time = time.time()
+dump_mats_modulus = 20
 
 for i in range(1, n_t+1):
+    ns.preconditioner.PyAMG._dump_mats = (i % dump_mats_modulus == 0)
     solve(F == 0, up, bcs=bcs_U, solver_parameters=solver_params, appctx=appctx)
     up0.assign(up)
     print(f'Timestep {i:03} -- elapsed {time.time()-start_time:.2f}s')

@@ -3,6 +3,7 @@ from firedrake.petsc import PETSc
 from firedrake.assemble import allocate_matrix, assemble
 import pyamg
 import scipy.sparse as sp
+import scipy.sparse.linalg as spla
 import functools
 import matplotlib.pyplot as plt
 import scipy.io as sio
@@ -10,6 +11,7 @@ import scipy.io as sio
 
 class PyAMG(PCBase):
     _prefix = "pyamg_"
+    _dump_mats = False
 
     def initialize(self, pc):
         from firedrake.assemble import allocate_matrix, assemble
@@ -78,8 +80,10 @@ class PyAMG(PCBase):
         # Create PyAMG solver from CSR matrix
         row, col, val = Pmat.getValuesCSR()
         self.Pcsr = sp.csr_matrix((val, col, row))
-        self.Amg = pyamg.ruge_stuben_solver(self.Pcsr)
-        self.dump_mat(pc, self.Pcsr)
+        #self.lu = spla.splu(self.Pcsr)
+        self.Amg = pyamg.classical.ruge_stuben_solver(self.Pcsr, strength=('classical', {'theta': 0.25}))
+        if PyAMG._dump_mats:
+            self.dump_mat(pc, self.Pcsr)
 
     def update(self, pc):
         self._assemble_P()
@@ -95,10 +99,13 @@ class PyAMG(PCBase):
             return (context.Jp or context.J, context._problem.bcs)
 
     def apply(self, pc, X, Y):
-        y = self.Amg.solve(X.array_r, tol=self.amg_rtol)
+        y = self.Amg.solve(X.array_r, tol=self.amg_rtol, accel='gmres')
+        #y = spla.spsolve(self.Pcsr, X.array_r)
+        #y = self.lu.solve(X.array_r)
         Y.setArray(y)
 
     def applyTranspose(self, pc, X, Y):
+        print('PyAMG applyTranspose!')
         pass
 
     def view(self, pc, viewer=None):

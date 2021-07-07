@@ -26,7 +26,7 @@ maxthreads = max(1, args['maxthreads'])
 
 out_dir = path.join('..', 'out_grids')
 mat_dir = path.join('..', 'out_matrices')
-mat_names = os.listdir(mat_dir)
+mat_names = list(filter(lambda x: x.endswith('.mat'), os.listdir(mat_dir)))
 num_mats = len(mat_names)
 
 # grid generation

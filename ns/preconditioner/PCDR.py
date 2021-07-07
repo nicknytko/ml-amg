@@ -184,6 +184,7 @@ class PCDR(PCBase):
 
         # Now add the reaction term
         self.Rksp.solve(X, R)
+        #self.Kksp.solve(X, R)
         Y.axpy(1.0, R)
 
     def applyTranspose(self, pc, X, Y):
