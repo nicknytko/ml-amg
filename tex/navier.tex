@@ -58,12 +58,11 @@
 \renewcommand{\Re}{\text{Re}}
 
 \begin{document}
-
 \section{Introduction}
 Here, we are exploring the use of AMG methods for the \textit{unsteady Navier-Stokes} equations.  In particular, we are attempting to answer the following research questions:
 \begin{enumerate}
 \item If an algebraic multigrid method (AMG) is used in the numerical solution to the Navier-Stokes equations, are we able to learn anything (in a machine-learning sense) about the solver?  Particularly, which AMG setups are most convergent and which fail to solve the problem for a specific timestep?
-\item If we do indeed learn something about the solver, can we use this to optimize and boost the solver efficiency?  A few examples where machine learning may be helpful:
+\item If we do indeed learn something about the solver, can we use this to optimize and boost the solver efficiency (in terms of computational complexity or running time)?  A few examples where machine learning may be helpful:
   \begin{enumerate}
   \item Allowing us to reuse AMG setups until we can confidently \textit{guess} that they will no longer be effective in solving the problem, and
   \item giving us a fast way to turn an AMG setup for an older, out-of-date timestep into a convergent setup for a new timestep.
@@ -71,12 +70,11 @@ Here, we are exploring the use of AMG methods for the \textit{unsteady Navier-St
 \end{enumerate}
 
 \section{Background}
-
-Here is a bit of background because Luke wanted to see the math.  Consider the nondimensional incompressible Navier-Stokes equations,
+Here is a bit of a background because Luke wanted to see the math.  Consider the nondimensional incompressible Navier-Stokes equations,
 \begin{align}
   \frac{\partial \vec{u}}{\partial t} + \left(\vec{u} \cdot \grad\right)\vec{u} + \grad p - \frac{1}{\Re} \grad^2\vec{u} &= \vec{f} \label{eqn:nsmomentum} \\
   \div \vec{u} &= 0. \label{eqn:nsdiv}
-\end{align}
+p\end{align}
 To obtain the weak form, first define the function space for the velocity space
 \begin{equation}
   \mat{H}^1 := \left\{ \vec{u} \in \mathcal{H}^{1}\left(\Omega\right)^d \setbar \vec{u} = \vec{w} \text{ on } \partial \Omega_D \right\}, \label{eqn:h1}
@@ -206,7 +204,7 @@ Since the matrix $\mat{F}$ includes the time dependent reaction term, with caref
                &= \mat{A}_p^{-1} \left(\mat{C}_{\vec{u}} + \frac{1}{\Re} \mat{A}\right)  \mat{M}_p^{-1} + \frac{1}{\Delta t}\mat{DM}_v^{-1}\mat{D}^T \label{eqn:pcdrfinal}
 \end{align}
 \section{Cylinder Flow Problem}
-The model problem being solved is flow in a rectangular cavity around a cylindrical obstacle, the mesh used is shown in figure \ref{fig:domain}.  Dirichlet ``no-slip'' ($\vec{v}=\vec{0}$) conditions are prescribed on the top, bottom, and cylindrical wall.  On the left inlet, a velocity Dirichlet condition of $\vec{v}=\left(2,0\right)$ is prescribed.  On the right wall, the velocity has a Neumann ($\vec{v} \cdot \vec{\hat{n}} = 0$) to allow the outlet velocity value to ``float'' to satisfy the other conditions.
+The model problem being solved is flow in a rectangular cavity around a cylindrical obstacle, the mesh used is shown in figure \ref{fig:domain}.  Dirichlet ``no-slip'' ($\vec{v}=\vec{0}$) conditions are prescribed on the top, bottom, and cylindrical wall.  On the left inlet, a velocity Dirichlet condition of $\vec{v}=\left(2,0\right)$ is prescribed.  On the right wall, the velocity has a Neumann ($\grad\vec{v} \cdot \vec{\hat{n}} = 0$) to allow the outlet velocity value to ``float'' to satisfy the other conditions.
 
 For the pressures space, homogeneous Dirichlet conditions are defined at the top, bottom, and cylindrical walls.  The left and right walls have Neumann boundary conditions.  Note that these boundary conditions do not need to be explicitly defined, rather they are imposed by the weak formulation.
 \begin{figure}[h]
@@ -229,6 +227,63 @@ The velocity block is solved using an AMG-preconditioned GMRES solver.  The AMG 
 
 The pressure schur-complement is solved using a time-dependent PCD preconditioner as outlined in \eqref{eqn:pcdrfinal}.  This is a slight modification of the PCD preconditioner that is built-in to Firedrake itself.  Each of the sub-matrices in the PCD preconditioner (pressure laplacian, pressure mass, and reaction compnent) are solved using a direct LU solver.
 
+\section{Learning Interpolation}
+Below are a few ideas on how to effectively learn an AMG interpolation operator for the above Navier-Stokes problem.  These can be considered an extension of the techniques presented by Luz, Galun, Maron, Basri, and Yavneh \cite{luz2020learning} and follow the classical AMG setup of first creating the C/F partitioning and the interpolation operator itself.  The basic method is to have two separate graph networks working serially:
+\begin{enumerate}
+\item A first graph network that, for a given A matrix, will output an optimal C/F partitioning for the problem.  The output should be a vector $\vec{c}$ whose entries lie in the range $\left[0,1\right]$ where $0$ corresponds to fine points and $1$ to coarse points.
+\item Another graph network that takes a C/F partitioning and outputs the columns of the interpolation operator $\mat{P}$.  If necessary, the graph edge data could be used to impose a sparsity pattern on the resultant columns.
+\end{enumerate}
+
+Having the two ``steps'' as separate networks can bring a few benefits.  One is that each network could be trained separately and then combined later to create a full AMG method -- each having a different loss function, training set, etc.
+\subsection{Loss Function}
+To train the networks, we will use a loss function based on the spectral radius of the error propagator:
+\begin{equation}
+  \mat{E} := \mat{R}^\nu \mat{C} \mat{R}^\nu
+\end{equation}
+where $\mat{R}$ is the error propagation per iteration of the relaxation scheme, $\nu$ is the number of pre-and-post-relaxation steps, and $\mat{G}$ is the coarse-grid correction error propagator,
+\begin{equation}
+  \mat{G} := \mat{I} - \mat{P} \left( \mat{P}^T \mat{A} \mat{P} \right)^{-1} \mat{P}^T \mat{A}.
+\end{equation}
+In this case, weighted Jacobi iteration is used for the relaxation scheme with a weight of $\omega=\frac{2}{3}$, giving an error propagator of
+\begin{equation}
+  \mat{R} := \mat{I} - \frac{2}{3}\mat{D}^{-1}\mat{A},
+\end{equation}
+where $\mat{D}=\text{diag}\left(\mat{A}\right)$.  In theory, an optimal interpolation operator should minimize the spectral radius of the error propagator, $\rho\left(\mat{E}\right)$.  However, backpropagation of the maximal eigenvector computed through, power iteration for example, tends to be rather unstable and can lead to numerical overflow\cite{wang2019backpropagationfriendly}.  Therefore, as proposed in \cite{luz2020learning}, minimizing the squared Frobenius norm, $\norm{\mat{A}}_F^2=\sum\lambda^2_i\left(\mat{A}\right)$ for SPD $\mat{A}$ can be done as a proxy.
+
+Using purely the error propagator as the loss will simply minimize the number coarse points in the final interpolation operator, which is unwanted.  Therefore, we will want to add a penalty proportional to the number of coarse points.  If we allow $\vec{c}$ to be the vector containing the C/F splitting and whose entries float between $0$ (fine) and $1$ (coarse), we can use the $L_1$ norm $\norm{\vec{c}}_1$ to penalize how ``dense'' the vector is.
+
+Bringing this all together, we obtain the final loss function
+\begin{equation}
+  \ell := \norm{\mat{E}}^2_F + \alpha \norm{\vec{c}}_1^2 \label{eqn:loss}
+\end{equation}
+for some scaling coefficient $\alpha$.
+
+There still remains the question of how do we represent the interchange of data between the ``CF'' network and the ``P'' network?  If we were to discretely split the C/F space at 0.5, and for example take $c_i\geq 0.5$ to be coarse points and $c_i<0.5$ to be fine points, we would run into the issue of having a discontinuous loss function in that gradient-descent based methods could not effectively train our pair of networks.   If our points are \textit{either} coarse \textit{or} fine, will we have any gradient information that would allow us to switch assignments?
+
+After some discussion with Matt, a few possible strategies are outlined below.
+\subsubsection{Continuous Loss}
+In this stategy, instead of generating $\mat{P} \in \mathbb{R}^{N_F\times N_C}$, we instead generate the ``full'' operator $\hat{\mat{P}} \in \mathbb{R}^{N_F \times N_F}$.  I.e., we compute all columns of the interpolation operator as if each node was coarse.  Let $\mat{C} := \text{diag}\left(\vec{c}\right)$, then we can update the coarse-grid propagator by somehow replacing $\mat{P}$ with $\hat{\mat{P}}$ and $\mat{C}$:
+\begin{equation}
+  \mat{G} := \mat{I} - \mat{P} \left( \mat{P}^T \mat{A} \mat{P} \right)^{-1} \mat{P}^T \mat{A}.
+\end{equation}
+I don't know.  Matt and I got kind of stuck here.  Matt suggested
+\begin{equation}
+  \mat{P} = \mat{C} \hat{\mat{P}} \mat{C} + \left(\mat{I} - \mat{C}\right),
+\end{equation}
+effectively inserting zeros into the columns of $\hat{\mat{P}}$ then replacing them with $1$.  The idea here is to find \textit{``some way to stick $\text{diag}\left(\vec{c}\right)$ into the calculation of $\mat{E}$ in a way that, if $\vec{c}$ is just $0$s and $1$s we get exactly the right $\mat{E}$''.}
+\subsubsection{Reinforcement Learning, ``Generalized Ali Method''}
+Here, we reframe the problem into a RL context.  Training is initialized with a partitioning of only fine points, then after each training step some node is flipped from fine to coarse according to the following algorithm:
+\begin{enumerate}
+\item For timestep $t$, let $\hat{\mat{P}}_t$ and $\mat{c}_t$ be the interpolation and c/f splitting, respectively.
+\item Have an RL network that takes $\hat{\mat{P}}_t$, $\mat{c}_t$, outputs $\widetilde{\mat{P}}_t$, $\widetilde{\mat{c}}_t$.
+\item Take the largest entry in $\widetilde{\vec{c}}_t - \vec{c}_t$ as an indicator of needing to flip entry $i$ from fine to coarse.  Generate $\hat{\mat{P}}_{t+1}$ and $\mat{c}_{t+1}$ from this new information.
+\item Repeat until an unspecified stopping condition.
+\end{enumerate}
+At each timestep, we can directly use the discontinuous loss from \eqref{eqn:loss}.
+\subsubsection{Reinforcement Learning, ``Generalized AlphaGo Method''}
+Use MCTS like AlphaGo.  This would have the benefit of having another network that could out some measure of ``goodness'' for a given interpolation operator.  This could be helpful in answering the research question in the introduction: can we reuse AMG setups for multiple timesteps until we can confidently \textit{guess} that they will no longer be effective?
+
+I don't have a lot to say about this one.  I would need to do some reading about this.
 \nocite{*}
 \bibliographystyle{siam}
 \bibliography{navier}
