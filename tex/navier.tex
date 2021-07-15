@@ -173,7 +173,7 @@ We can define $\mat{S}:=\mat{D}\mat{F}^{-1}\mat{D}^T$ and $\vec{b}:=\frac{1}{\De
 However, $\mat{S}$ is now completely full; for large systems it is infeasible to actually form the product.  Hence we now turn to iterative methods that only need the operation of the matrix-vector product (which we will approximate).
 
 \subsection{Preconditioning}
-One widely-used preconditioner to solve the schur complement system from the previous section is the \textit{Pressure Convection-Diffusion} (PCD) preconditioner. Introduce the concept of a commutator $\varepsilon$ between the divergence and convection-diffusion operators,
+One widely-used preconditioner to solve the Schur complement system from the previous section is the \textit{Pressure Convection-Diffusion} (PCD) preconditioner. Introduce the concept of a commutator $\varepsilon$ between the divergence and convection-diffusion operators,
 \begin{equation}
   \varepsilon_h = \mat{M}_p^{-1}\mat{D}\mat{M}_v^{-1}\mat{F}_v - \mat{M}^{-1}_p\mat{F}_p\mat{Q}^{-1}_p\mat{D}. \label{eqn:commutator}
 \end{equation}
@@ -225,7 +225,7 @@ The Firedrake\cite{Firedrake} solution to the above problem uses a ``Flexible'' 
 
 The velocity block is solved using an AMG-preconditioned GMRES solver.  The AMG routine is a Ruge-St\"uben solver courtesy of PyAMG\cite{OlSc2018}.
 
-The pressure schur-complement is solved using a time-dependent PCD preconditioner as outlined in \eqref{eqn:pcdrfinal}.  This is a slight modification of the PCD preconditioner that is built-in to Firedrake itself.  Each of the sub-matrices in the PCD preconditioner (pressure laplacian, pressure mass, and reaction compnent) are solved using a direct LU solver.
+The pressure Schur complement is solved using a time-dependent PCD preconditioner as outlined in \eqref{eqn:pcdrfinal}.  This is a slight modification of the PCD preconditioner that is built-in to Firedrake itself.  Each of the sub-matrices in the PCD preconditioner (pressure laplacian, pressure mass, and reaction compnent) are solved using a direct LU solver.
 
 \section{Learning Interpolation}
 Below are a few ideas on how to effectively learn an AMG interpolation operator for the above Navier-Stokes problem.  These can be considered an extension of the techniques presented by Luz, Galun, Maron, Basri, and Yavneh \cite{luz2020learning} and follow the classical AMG setup of first creating the C/F partitioning and the interpolation operator itself.  The basic method is to have two separate graph networks working serially:
