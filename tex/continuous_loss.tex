@@ -1,0 +1,146 @@
+\documentclass{article}
+
+\usepackage{lipsum}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{graphicx}
+\usepackage{epstopdf}
+\usepackage{algorithmic}
+\ifpdf%
+  \DeclareGraphicsExtensions{.eps,.pdf,.png,.jpg}
+\else
+  \DeclareGraphicsExtensions{.eps}
+\fi
+\usepackage{amsopn}
+\DeclareMathOperator{\diag}{diag}
+\usepackage{booktabs}
+\usepackage{bbm}
+\usepackage{bm}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1.5in]{geometry}
+\usepackage{hyperref}
+
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+\newcommand{\normtwo}[1]{\left\lVert#1\right\rVert_2}
+\newcommand{\abs}[1]{\left\lvert#1\right\rvert}
+\newcommand{\mat}[1]{\bm{{#1}}}
+\renewcommand{\vec}[1]{\bm{{#1}}}
+\newcommand{\lequiv}{\Leftrightarrow}
+\newcommand{\bigO}[1]{\mathcal{O}\!\left(#1\right)}
+\newcommand{\ceil}[1]{\left\lceil #1 \right\rceil}
+\newcommand{\floor}[1]{\left\lfloor #1 \right\rfloor}
+\newcommand{\sfrac}[2]{#1/#2}
+\newcommand{\hquad}{\enskip}
+\newcommand{\expected}[1]{\mathbb{E}\left[#1\right]}
+\newcommand{\mspan}[1]{\text{span}\left( #1 \right)}
+\newcommand{\prob}[1]{P\left(#1\right)}
+\newcommand{\probt}[1]{P\left( \text{#1} \right)}
+\newcommand{\condprob}[2]{P\left(#1 \:|\: #2\right)}
+\newcommand{\condprobt}[2]{P\left(\text{#1} \:|\: \text{#2}\right)}
+\newcommand{\bayes}[2]{\frac{\condprob{#2}{#1}\prob{#1}}{\prob{#2}}}
+\newcommand{\bayesx}[3]{\frac{\condprob{#2}{#1}\prob{#1}}{\condprob{#2}{#1}\prob{#1} + \condprob{#2}{#3}\prob{#3}}}
+\newcommand{\sech}{\text{sech}}
+\newcommand*{\vertbar}{\rule[-1ex]{0.5pt}{2.5ex}}
+\newcommand*{\horzbar}{\rule[.5ex]{2.5ex}{0.5pt}}
+\newcommand{\vect}[2]{\underline{{#1}}_{{#2}}}
+\newcommand{\basisp}[1]{\underline{{p}}_{{#1}}}
+\newcommand{\basisq}[1]{\underline{{q}}_{{#1}}}
+\newcommand{\coeff}[1]{\underline{{a}}_{{#1}}}
+\newcommand{\bestfit}{\underline{\bar{x}}}
+\newcommand{\grad}{\nabla}
+\newcommand{\laplace}{\Delta}
+\newcommand{\setbar}{\:\middle|\:}
+\renewcommand{\div}{\grad \cdot}
+\renewcommand{\Re}{\text{Re}}
+
+\begin{document}
+\section{Loss Function}
+To train the networks, we will use a loss function based on the spectral radius of the error propagator:
+\begin{equation}
+  \mat{E} := \mat{R}^\nu \mat{G} \mat{R}^\nu
+\end{equation}
+where $\mat{R}$ is the error propagation per iteration of the relaxation scheme, $\nu$ is the number of pre-and-post-relaxation steps, and $\mat{G}$ is the coarse-grid correction error propagator,
+\begin{equation}
+  \mat{G} := \mat{I} - \mat{P} \left( \mat{P}^T \mat{A} \mat{P} \right)^{-1} \mat{P}^T \mat{A}.
+\end{equation}
+In this case, weighted Jacobi iteration is used for the relaxation scheme with a weight of $\omega=\frac{2}{3}$, giving an error propagator of
+\begin{equation}
+  \mat{R} := \mat{I} - \frac{2}{3}\mat{D}^{-1}\mat{A},
+\end{equation}
+where $\mat{D}=\text{diag}\left(\mat{A}\right)$.  In theory, an optimal interpolation operator should minimize the spectral radius of the error propagator, $\rho\left(\mat{E}\right)$.  However, backpropagation of the maximal eigenvector computed through, power iteration for example, tends to be rather unstable and can lead to numerical overflow\cite{wang2019backpropagationfriendly}.  Therefore, as proposed in \cite{luz2020learning}, minimizing the squared Frobenius norm, $\norm{\mat{A}}_F^2=\sum\lambda^2_i\left(\mat{A}\right)$ for SPD $\mat{A}$ can be done as a proxy.
+
+Using purely the error propagator as the loss will simply minimize the number coarse points in the final interpolation operator, which is unwanted.  Therefore, we will want to add a penalty proportional to the number of coarse points.  If we allow $\vec{c}$ to be the vector containing the C/F splitting and whose entries float between $0$ (fine) and $1$ (coarse), we can use the $L_1$ norm $\norm{\vec{c}}_1$ to penalize how ``dense'' the vector is.
+
+Bringing this all together, we obtain the final loss function
+\begin{equation}
+  \ell := \norm{\mat{E}}^2_F + \alpha \norm{\vec{c}}_1 \label{eqn:loss}
+\end{equation}
+for some scaling coefficient $\alpha$.
+
+There still remains the question of how do we represent the interchange of data between the ``CF'' network and the ``P'' network?  If we were to discretely split the C/F space at 0.5, and for example take $c_i\geq 0.5$ to be coarse points and $c_i<0.5$ to be fine points, we would run into the issue of having a discontinuous loss function in that gradient-descent based methods could not effectively train our pair of networks.   Hence in the following section, we will introduce the \textit{continuous formulation} of the error propagator.
+
+\subsection{Continuous Formulation}
+Let $\hat{\mat{P}}\in\mathbb{R}^{N_F\times N_F}$ be the ``full'' interpolation operator that is obtained from the output of the \textit{P-net} on every node.  Define $\vec{c}$ to be the vector encoding the coarse/fine selection such that
+\begin{align*}
+  c_i &= 1 \hquad \text{if node \textit{i} is coarse} \\
+  c_i &= 0 \hquad \text{if node \textit{i} is fine},
+\end{align*}
+and let $\mat{C}:=\text{diag}\left(\vec{c}\right)$.  Let $\mat{P}\in\mathbb{R}^{N_F \times N_C}$ be the \textit{conventional} operator that one would obtain if the \textit{P-net} was run on \textit{only coarse nodes}.  We will show in the remainder of this section that defining
+\begin{align}
+  \bar{\mat{P}} &= \hat{\mat{P}}\mat{C} \\
+  \bar{\mat{G}} &= \mat{I} - \bar{\mat{P}}\left(\bar{\mat{P}}^T \mat{A} \bar{\mat{P}} + \mat{I} - \mat{C}\right)^{-1} \bar{\mat{P}}^T \mat{A}
+\end{align}
+results in $\mat{G} = \bar{\mat{G}}$ in the discrete case of $c_i$ being \textit{either} 0 or 1.
+
+First, let us consider the matrix $\bar{\mat{P}} = \hat{\mat{P}}\mat{C}$.  Its structure is defined such that it has either the columns of $\mat{P}$ when $c_i=1$ or columns of zeros when $c_i=0$.  Thus multiplying $\mat{B}\bar{\mat{P}}$ for some matrix $\mat{B}\in\mathbb{R}^{N_F \times N_F}$ will give the same product as $\mat{B}\mat{P}$ except with extra columns of zeros added. Equivalently, $\bar{\mat{P}}^T\mat{B}$ will result in $\mat{P}^T\mat{B}$ except with rows of zeros added.
+
+Using this information, let us look at the $\bar{\mat{P}}^T\mat{A}\bar{\mat{P}} + \mat{I} - \mat{C}$ term.  The coarse projection $\bar{\mat{P}}^T\mat{A}\bar{\mat{P}}$ is nothing more than $\mat{P}^T\mat{A}\mat{P}$ except with rows and columns of zeros added.  Such a matrix is singular, however, because of these new zero entries.  To remedy this, we add $1$ along the diagonal via $(\mat{I}-\mat{C})$ where these singularities exist and get a matrix that is invertible.
+
+The expression $\left(\bar{\mat{P}}^T\mat{A}\bar{\mat{P}} + \mat{I} - \mat{C}\right)^{-1}$ is equivalent to $\left(\mat{P}^T\mat{A}\mat{P}\right)^{-1}$ with columns of the $N_F \times N_F$ identity matrix inserted.  The sparsity pattern is preserved.
+
+\begin{proof}
+  Define the permutation matrix $\mat{Q}$ that permutes the rows and columns of $\mat{S} := \bar{\mat{P}}^T\mat{A}\bar{\mat{P}} + \mat{I} - \mat{C}$ to get a block matrix structure in which the top-left entry is the $N_C\times N_C$ identity matrix:
+  \begin{equation}
+    \mat{Q}^T\mat{S}\mat{Q} =
+    \begin{bmatrix}
+      \mat{I} & \mat{0} \\
+      \mat{0} & \mat{P}^T\mat{A}\mat{P}
+    \end{bmatrix}. \label{eqn:qsq}
+  \end{equation}
+  Because $\mat{Q}$ is unitary, $\mat{Q}^T=\mat{Q}^{-1}$.  This gives us the relationship
+  \begin{equation}
+    \left(\mat{Q}^T\mat{S}\mat{Q}\right)^{-1} = \mat{Q}^{-1}\mat{S}^{-1}\left(\mat{Q}\right)^{-1} = \mat{Q}^T\mat{S}^{-1}\mat{Q}. \label{eqn:qsq_inv}
+  \end{equation}
+  Following the block structure, we also have that
+  \begin{equation}
+    \left(\mat{Q}^T\mat{S}\mat{Q}\right)^{-1} = \begin{bmatrix}
+      \mat{I} & \mat{0} \\
+      \mat{0} & \left(\mat{P}^T\mat{A}\mat{P}\right)^{-1}
+    \end{bmatrix}. \label{eqn:qsq_inv_structure}
+  \end{equation}
+  Substituting \eqref{eqn:qsq_inv_structure} into \eqref{eqn:qsq_inv} and re-arranging gives
+  \begin{equation}
+    \mat{S}^{-1} = \mat{Q} \begin{bmatrix}
+      \mat{I} & \mat{0} \\
+      \mat{0} & \left(\mat{P}^T\mat{A}\mat{P}\right)^{-1}
+    \end{bmatrix} \mat{Q}^T.
+  \end{equation}
+  Of course, $\mat{Q}^T$ is also a permutation matrix.  Thus, the inverse of $\bar{\mat{P}}^T\mat{A}\bar{\mat{P}} + \mat{I} - \mat{C}$ is equal to the inverse of $\mat{P}^T\mat{A}\mat{P}$ with columns of the identity added.
+\end{proof}
+
+Finally, we can show $\bar{\mat{P}}\left(\bar{\mat{P}}^T \mat{A} \bar{\mat{P}} + \mat{I} - \mat{C}\right)^{-1} \bar{\mat{P}}^T = \mat{P}\left(\mat{P}^T\mat{A}\mat{P}\right)^{-1}\mat{P}^T$.  We have already proven that $\left(\bar{\mat{P}}^T \mat{A} \bar{\mat{P}} + \mat{I} - \mat{C}\right)^{-1}$ is equivalent to $\left(\mat{P}^T\mat{A}\mat{P}\right)^{-1}$ except for columns of the identity inserted.  Left multiplying by $\bar{\mat{P}}$ and right multiplying by $\bar{\mat{P}}$ will interpolate the columns and rows back into the fine-grid space.  Because of the $0$ pattern in $\bar{\mat{P}}$, any $1$'s on the diagonal of the inverse term simply get eradicated.  Therefore when the values of $c_i$ are discrete, $\bar{\mat{G}}=\mat{G}$.
+
+\subsection{Additional Considerations}
+When we find $\left(\bar{\mat{P}}^T \mat{A} \bar{\mat{P}} + \mat{I} - \mat{C}\right)^{-1}$, we are left with $1$'s along the diagonal for coarse nodes.  For the discrete case, this does not matter.  However for continuous $c_i$, I wonder if the correct expression should be
+\begin{equation}
+  \left(\bar{\mat{P}}^T \mat{A} \bar{\mat{P}} + \mat{I} - \mat{C}\right)^{-1} - \mat{I} + \mat{C},
+\end{equation}
+which subtracts out the $\mat{I} - \mat{C}$ that was added and would be closer to a ``coarse-grid-inverse''.  It may be the case that this doesn't even matter, though, if the neural network can still learn anyway.
+
+\bibliographystyle{siam}
+\bibliography{navier}
+\end{document}

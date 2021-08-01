@@ -268,7 +268,7 @@ In this stategy, instead of generating $\mat{P} \in \mathbb{R}^{N_F\times N_C}$,
 \end{equation}
 I don't know.  Matt and I got kind of stuck here.  Matt suggested
 \begin{equation}
-  \mat{P} = \mat{C} \hat{\mat{P}} \mat{C} + \left(\mat{I} - \mat{C}\right),
+  \mat{P} = \hat{\mat{P}} \mat{C} + \left(\mat{I} - \mat{C}\right),
 \end{equation}
 effectively inserting zeros into the columns of $\hat{\mat{P}}$ then replacing them with $1$.  The idea here is to find \textit{``some way to stick $\text{diag}\left(\vec{c}\right)$ into the calculation of $\mat{E}$ in a way that, if $\vec{c}$ is just $0$s and $1$s we get exactly the right $\mat{E}$''.}
 \subsubsection{Reinforcement Learning, ``Generalized Ali Method''}
