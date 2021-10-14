@@ -23,6 +23,7 @@
 \usepackage[T1]{fontenc}
 \usepackage[margin=1.5in]{geometry}
 \usepackage{hyperref}
+\usepackage[pdf]{graphviz}
 
 \newcommand{\norm}[1]{\left\lVert#1\right\rVert}
 \newcommand{\normtwo}[1]{\left\lVert#1\right\rVert_2}
@@ -58,9 +59,28 @@
 \renewcommand{\Re}{\text{Re}}
 
 \begin{document}
-\section{Learning Aggregation-Based Interpolation}
+\section{Background}\label{sec:background}
+Currently, we are attempting to learn an interpolation operator $\mat{P}$ given a pre-existing aggregation of some system $\mat{A}$.  The graphnet being used is a combination of \textit{node convolution} and \textit{edge convolution} layers.  The main distinction between the two is that the node convolution accepts some nodal values $\vec{v}$, and outputs a new set of nodal values $\vec{v}^\prime$.  The edge convolution accepts edge attributes $\vec{e}$ and outputs $\vec{e}^\prime$.  We can think of this as modifying the values (but not the structure) of the input graph at each layer.
 
-The edge-based convolution network we are using currently outputs a matrix that contains the same sparsity (or a subset of) the graph that it was given.  This means that it can be difficult to directly output some matrix with a different sparsity pattern without some intermediate transformation.
+Because of this, the graphnet takes as input some graph $\mat{G} = \left(\vec{v}, \vec{e}\right)$ and outputs a new graph $\mat{G}^\prime = \left(\vec{v}^\prime, \vec{e}^\prime\right)$.  The graphs $\mat{G}$ and $\mat{G}^\prime$ have the same underlying structure and node connectivity, but may contain differing nodal and edge weights (including a different number of attributes per node/edge).
+
+We can extend the above to work analogously with sparse matrices.  If we have some sparse matrix $\mat{A}$, we can create the graph $\mat{G}_{\mat{A}}$ by outputting one node per row/column and assigning edges based on nonzero entries of $\mat{A}_{ij}$.  Therefore, if we were to generate the graph $\mat{G}_{\mat{A}}$ based on $\mat{A}$, we will get some output graph $\mat{G}_{\mat{A}}^\prime$ that can be transformed back into a sparse matrix $\mat{A}^\prime$.  Because the graph structure is unchanged, we must have that $\mat{A}^\prime$ contains the same sparsity as $\mat{A}$, though the nonzero entries may be different.
+
+This detail prevents us from inputting some matrix $\mat{A}$ to the graphnet and directly obtaining a $\mat{P}$ back; we are constrained by the sparsity we are able to obtain.  If we convolve on some matrix containing the sparsity of $\mat{P}$ instead, we may lose information that was present in $\mat{A}$.  In section \ref{sec:graphnet}, we will describe the network, inputs, and outputs in more detail.  In section \ref{sec:avg_pooling}, we will explore how given some $\mat{A}^\prime$ from the output of the graphnet, we can transform it into a suitable $\mat{P}$ that can be used in an AMG method.
+
+\section{Network Details}\label{sec:graphnet}
+The matrix $\mat{A}$ is first turned into a graph $\mat{G}_{\mat{A}}$ by the description above; each row/column is converted into a node $n_i$ and non-zero entries of $\abs{\mat{A}_{ij}}$ are converted into edges between nodes $i$ and $j$.  We then add an additional binary edge attribute $\theta_{ij}$, given by
+\begin{equation}
+  \theta_{ij} = \begin{cases} 1 & \text{nodes } i,j \text{ in same aggregate} \\ 0 & \text{otherwise} \end{cases}.
+\end{equation}
+This means that each edge has two attributes: $\abs{\mat{A}_{ij}}$ and the binary feature from above.  The feature $\theta_{ij}$ is how the graphnet is ``aware'' of the aggregate information.
+
+The network is defined as three message-passing node-convolution layers, followed by one edge-convolution layer.  This takes as input a graph $\mat{G} = \left(\vec{v}, \vec{e}\right)$ and gives a new graph $\mat{G}^\prime = \left(\vec{v}^\prime, \vec{e}\right)$ with the same connectivity information.  Of course, we are only interested in the edge values; the nodal values are a by-product used in intermediate convolutions.  So, given a sparse matrix $\mat{A}$, the graphnet will output a new sparse matrix $\mat{A}^\prime$ with the same sparsity pattern.
+
+\section{Aggregation-Based Average Pooling}\label{sec:avg_pooling}
+This simple approach works by ``collapsing'' columns of nodes in similar aggregates, forming a $\mat{P}$ that contains a reasonable sparsity pattern for aggregation-based AMG.
+
+
 
 Denote $Agg$ the tentative aggregation operator without smoothing, for example,
 \begin{equation}
@@ -88,7 +108,7 @@ One way to solve this is to first form $\mat{\hat{P}}$ as usual using the graphn
 \end{equation}
 with nodes to the left of the bar signifying those belonging to the first aggregate, and those to the right belonging to the second aggregate.
 
-Then, we form $\hat{Agg}$, which is the $Agg$ operator from above except with its columns normalized in the $1$-norm.  This would give
+Then, we form $\hat{Agg}$, which is the $Agg$ operator from above except with its columns normalized in the $1$-norm.
 \begin{equation}
 \hat{Agg} =
 \begin{bmatrix}

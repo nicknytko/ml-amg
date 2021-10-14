@@ -1,0 +1,170 @@
+\documentclass{article}
+
+\usepackage{lipsum}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{graphicx}
+\usepackage{epstopdf}
+\ifpdf%
+  \DeclareGraphicsExtensions{.eps,.pdf,.png,.jpg}
+\else
+  \DeclareGraphicsExtensions{.eps}
+\fi
+\usepackage{amsopn}
+\DeclareMathOperator{\diag}{diag}
+\usepackage{booktabs}
+\usepackage{bbm}
+\usepackage{bm}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1.5in]{geometry}
+\usepackage{hyperref}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+\newcommand{\normtwo}[1]{\left\lVert#1\right\rVert_2}
+\newcommand{\abs}[1]{\left\lvert#1\right\rvert}
+\newcommand{\mat}[1]{\bm{{#1}}}
+\renewcommand{\vec}[1]{\bm{{#1}}}
+\newcommand{\lequiv}{\Leftrightarrow}
+\newcommand{\bigO}[1]{\mathcal{O}\!\left(#1\right)}
+\newcommand{\ceil}[1]{\left\lceil #1 \right\rceil}
+\newcommand{\floor}[1]{\left\lfloor #1 \right\rfloor}
+\newcommand{\sfrac}[2]{#1/#2}
+\newcommand{\hquad}{\enskip}
+\newcommand{\expected}[1]{\mathbb{E}\left[#1\right]}
+\newcommand{\mspan}[1]{\text{span}\left( #1 \right)}
+\newcommand{\prob}[1]{P\left(#1\right)}
+\newcommand{\probt}[1]{P\left( \text{#1} \right)}
+\newcommand{\condprob}[2]{P\left(#1 \:|\: #2\right)}
+\newcommand{\condprobt}[2]{P\left(\text{#1} \:|\: \text{#2}\right)}
+\newcommand{\bayes}[2]{\frac{\condprob{#2}{#1}\prob{#1}}{\prob{#2}}}
+\newcommand{\bayesx}[3]{\frac{\condprob{#2}{#1}\prob{#1}}{\condprob{#2}{#1}\prob{#1} + \condprob{#2}{#3}\prob{#3}}}
+\newcommand{\sech}{\text{sech}}
+\newcommand*{\vertbar}{\rule[-1ex]{0.5pt}{2.5ex}}
+\newcommand*{\horzbar}{\rule[.5ex]{2.5ex}{0.5pt}}
+\newcommand{\vect}[2]{\underline{{#1}}_{{#2}}}
+\newcommand{\basisp}[1]{\underline{{p}}_{{#1}}}
+\newcommand{\basisq}[1]{\underline{{q}}_{{#1}}}
+\newcommand{\coeff}[1]{\underline{{a}}_{{#1}}}
+\newcommand{\bestfit}{\underline{\bar{x}}}
+\newcommand{\grad}{\nabla}
+\newcommand{\laplace}{\Delta}
+\newcommand{\setbar}{\:\middle|\:}
+\renewcommand{\div}{\grad \cdot}
+\renewcommand{\Re}{\text{Re}}
+
+\begin{document}
+\section{Background}
+The PDE being solved is Laplace's equation in two dimensions,
+\begin{equation}
+  -\grad^2 \vec{u} = \vec{0},
+\end{equation}
+with homogeneous Neumann conditions on the boundary $\partial \Omega$,
+\begin{equation}
+  \grad \cdot \vec{\hat{n}} = \vec{0}.
+\end{equation}
+Training meshes are created by first generating 45-90 random points, then triangulating the mesh such that sharp interior angles are avoided.
+These meshes are then used to discretize the PDE using piecewise-linear (triangular) finite elements.
+
+\section{Training Algorithm}
+
+The training routine is formally described in Alg. \ref{alg:training}.  In summary, each matrix in a training batch has its last row replaced with $1$'s (to force it to be solvable w/ minimal norm solution), and then combined into a large block diagonal system.  This block-diagonal system is converted directly into a graph with fine-fine connections removed, then passed into the interpolation weight graph network.
+
+The graph network will return a new list of edges of the same cardinality as that which was passed in, meaning we have interpolation weights between coarse-coarse and fine-coarse nodes.  Fine-fine weights can be trivially added in by setting their respective entries to 1.  This new list of edges is then transformed back into a matrix, and the columns corresponding to fine nodes are removed to get the correct $N_f \times N_c$ interpolation matrix.
+
+This interpolation matrix is then passed to the AMG loss function, described in Alg. \ref{alg:loss}, which runs several AMG iterations.  This loss function will randomly generate several starting guess vectors, $\vec{x}_i$, then iterate directly on these to solve $\mat{Ax}=\mat{0}$.  A Jacobi relaxation scheme is used with weight $\omega=\frac{2}{3}$.  After each multigrid iteration, the error (norm of each $\vec{x}_i$) is recorded.  After a sufficient number of iterations, the convergence factor for each vector is (approximately) computed using the geometric mean and the largest convergence factor is returned.  In practice, if $\vec{x}_i$ are randomly generated for each invocation of the loss function, then good training convergence can be achieved.
+
+\begin{algorithm}
+  \begin{algorithmic}
+    \Procedure{TrainingLoop}{}
+    \For{each training batch}
+    \State Let $\mat{A}_{I_1} \ldots \mat{A}_{I_n}$ be the $n$ matrices in the current batch.  Also $\vec{c}_{I_1} \ldots \vec{c}_{I_n}$ to be the coarse-fine partitionings for each $\mat{A}$.\\
+    \For{$\mat{A}_i$ in the batch}
+    \State Set the last row of $\mat{A}_i$ to consist of all $1$'s
+    \EndFor \\
+    \State $\mat{A}_{\text{combined}} := \begin{bmatrix}
+      \mat{A}_{I_1} & & \\
+      & \mat{A}_{I_2} & \\
+      & & \ddots & \\
+      & & & \mat{A}_{I_n}
+    \end{bmatrix}$
+    \State $\mat{c}_{\text{combined}} := \begin{bmatrix}
+      \vec{c}_{I_1}^T &
+      \vec{c}_{I_2}^T &
+      \hdots &
+      \vec{c}^T_{I_n}
+    \end{bmatrix}^T$ \\
+    \State $\vec{v}$, $\vec{e}$ $:=$ \Call{MatrixToGraph}{$\mat{A}_{\text{combined}}$, $\vec{c}_{\text{combined}}$}
+    \State $\vec{e}_P := $ \Call{GraphNet}{$\vec{v}$, $\vec{e}$} \Comment{Get prolongation edge weights from graphnet} \\
+    \State $\mat{P}_{\text{full}} := $ \Call{GraphToMatrix}{$\vec{v}$, $\vec{e}_P$} \Comment{Get the full $n_F \times n_F$ interpolation matrix}
+    \For{coarse node $i$ in $\vec{c}_{\text{combined}}$}
+    \State $\left(\mat{P}_{\text{full}}\right)_{ii} \gets 1$ \Comment{Set all coarse-coarse connections to be 1}
+    \EndFor
+    \State Create $\mat{P}$ by removing all columns from $\mat{P}_{\text{full}}$ that correspond to fine nodes \\
+    \State $l := $ \Call{AMGLoss}{$\mat{P}$, $\mat{A}_{\text{combined}}$, $10$}
+    \State \Call{Optimizer}{$l$}
+    \EndFor
+    \EndProcedure
+  \end{algorithmic}
+  \caption{Main training loop}
+  \label{alg:training}
+\end{algorithm}
+
+\begin{algorithm}
+\begin{algorithmic}
+
+  \Procedure{Jacobi}{$\mat{A}$, $\mat{X}$, $\omega$, $\nu$}
+  \State $\mat{D} := $ the diagonal matrix of $\mat{A}$
+  \For{$i=1 \ldots \nu$}
+  \State $\mat{X} \gets \mat{X} - \omega \mat{D}^{-1} \mat{A} \mat{X}$
+  \EndFor
+  \State \Return $\mat{X}$
+  \EndProcedure
+\end{algorithmic}
+\begin{algorithmic}
+
+  \Procedure{AMGLoss}{$\mat{P}$, $\mat{A}$, $\ell$}
+  \State $\mat{A}_H := \mat{P}^T \mat{A} \mat{P}$
+  \State Define $\mat{X} \in \mathbb{R}^{n_F \times T}$ to be a matrix whose $T$ columns are randomly generated from a normal distribution.  Each column is normalized with the 2-norm.
+  \State Define $\mat{E} \in \mathbb{R}^{\ell \times T}$ to hold the error (norm of $\vec{x}_i$) at each iteration.
+  \For{$i=1 \ldots \ell$}
+  \State $\mat{X} \gets$ \Call{Jacobi}{$\mat{A}$, $\mat{X}$, $\omega=\frac{2}{3}$, $\nu=2$} \Comment{Pre-relaxation}
+  \State $\mat{E_H} := - \mat{A_H}^{-1} \left(\mat{P}^T \mat{A} \mat{X} \right)$ \Comment{Coarse-grid correction}
+  \State $\mat{X} \gets \mat{X} + \mat{P} \mat{E_H}$ \Comment{Interpolate to fine grid}
+  \State $\mat{X} \gets$ \Call{Jacobi}{$\mat{A}$, $\mat{X}$, $\omega=\frac{2}{3}$, $\nu=2$} \Comment{Post-relaxation}
+  \State $\mat{E}_{ij} \gets \norm{\mat{x}_j}$ \Comment{Store the norm of each test vector}
+  \EndFor
+  \State $a := \min\left\{\floor{\frac{T}{2}}, 6\right\}$
+  \State \Return $\max\left(\left(\mat{e}_T / \mat{e}_{T-a}\right)^{1/\left(a-1\right)}\right)$ \Comment{Return approx. convergence factor}
+  \EndProcedure
+\end{algorithmic}
+\caption{Training loss function}
+\label{alg:loss}
+\end {algorithm}
+
+\begin{algorithm}
+  \begin{algorithmic}
+    \Procedure{MatrixToGraph}{$\mat{A}, \vec{c}$}
+    \State $\vec{v} = \left\{\right\}$ \Comment{Create an empty ordered list of vertices}
+    \State $\vec{e} = \left\{\right\}$ \Comment{Create an empty ordered list of edges}
+    \For{$i=1 \ldots n$}
+    \For{$j=1 \ldots n$}
+    \If{$\mat{A}_{ij} \neq 0$}
+    \State Add node $ij$ to $\vec{v}$
+    \If{nodes $i$ and $j$ are both not fine}
+    \State Add edge $ij$ to $\vec{e}$ with weight $\abs{\mat{A}_{ij}}$
+    \EndIf
+    \EndIf
+    \EndFor
+    \EndFor
+    \State \Return $\vec{v}$, $\vec{e}$
+    \EndProcedure
+  \end{algorithmic}
+  \caption{Auxiliary matrix to graph routine}
+\end{algorithm}
+\end{document}
