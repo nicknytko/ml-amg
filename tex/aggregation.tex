@@ -71,7 +71,7 @@ This detail prevents us from inputting some matrix $\mat{A}$ to the graphnet and
 \section{Network Details}\label{sec:graphnet}
 The matrix $\mat{A}$ is first turned into a graph $\mat{G}_{\mat{A}}$ by the description above; each row/column is converted into a node $n_i$ and non-zero entries of $\abs{\mat{A}_{ij}}$ are converted into edges between nodes $i$ and $j$.  We then add an additional binary edge attribute $\theta_{ij}$, given by
 \begin{equation}
-  \theta_{ij} = \begin{cases} 1 & \text{nodes } i,j \text{ in same aggregate} \\ 0 & \text{otherwise} \end{cases}.
+  \theta_{ij} = \begin{cases} 0 & \text{nodes } i,j \text{ in same aggregate} \\ 1 & \text{otherwise} \end{cases}.
 \end{equation}
 This means that each edge has two attributes: $\abs{\mat{A}_{ij}}$ and the binary feature from above.  The feature $\theta_{ij}$ is how the graphnet is ``aware'' of the aggregate information.
 
@@ -134,10 +134,23 @@ Now, we can ``collapse'' the columns of the nodes corresponding to each aggregat
   & 0.416 \\
 \end{bmatrix},
 \end{equation}
-which gives a reasonable sparsity pattern for the interpolation, given $Agg$.  Note that if we view this as a graph, we get a 1-ring of edge connections around each aggregate.
+which gives a reasonable sparsity pattern for the interpolation, given $Agg$.  Note that if we view this as a graph, we get a 1-ring of edge connections around each aggregate.  A somewhat hand-wavy proof is given below.
 \begin{proof}
-  Assume that the entries of $\mat{\hat{P}}$ are nonnegative, which is true because of the ReLU activation being used.  For some column $i$ of $\mat{\hat{P}}$, we can view the nonzero entries $\hat{P}_{ij}$ for $i \neq j$ as edge connections from node $i$ to $j$.  By averaging some columns $\vec{\hat{p}}_{i_1}, \vec{\hat{p}}_{i_2}, \ldots, \vec{\hat{p}}_{i_n}$ of an aggregate, we are obtaining the union of the neighborhood of each node in the aggregate, because all entries are nonnegative.  Thus, an aggregate has connections to each node it is composed of, as well as the union of the neighbors of each node.
+  Assume that the entries of $\mat{\hat{P}}$ are strictly positive, which is reasonable because of the activation being used.  We can view the nonzero entries $\hat{p}_{ij}$ as edge connections from node $j$ to $i$.
+
+  By averaging the columns $\vec{\hat{p}}_{i_1}, \vec{\hat{p}}_{i_2}, \ldots, \vec{\hat{p}}_{i_n}$ of an aggregate composed of nodes $i_1, i_2, \ldots, i_n$, we are obtaining the union of the neighborhood of each node in the aggregate, because all entries are positive.  Thus, an aggregate has connections to each node it is composed of, as well as the union of the neighbors of each node.
 \end{proof}
+
+\section{Full Algorithm}
+Now that the average pooling technique has been introduced, the full algorithm for generating an interpolation operator $\mat{P}$ is defined below.
+\begin{enumerate}
+\item Given some sparse matrix $\mat{A}$, generate the graph $\mat{G}_{\mat{A}}$.
+\item Create aggregates using some established clustering algorithm, such as Lloyd.  Store this as $Agg$ and form $\hat{Agg}$ by normalizing the columns.
+\item Create the binary inter-aggregate edge features $\theta_{ij}$ and append this to the edges of $\mat{G}_{\mat{A}}$.
+\item Pass $\mat{G}_{\mat{A}}$ to the graphnet and obtain back $\mat{G}^\prime_{\mat{A}}$, which is a graph containing the same number of nodes and edges, but each having different weights.
+\item Convert $\mat{G}^\prime_{\mat{A}}$ back into a matrix, we will denote this as $\mat{\hat{P}}$.
+\item Finally, create $\mat{P}=\mat{\hat{P}}\hat{Agg}$.  This is our final interpolation operator.
+\end{enumerate}
 
 \section{Problem Setup}
 The specific problem being solved is a diffusion problem with Neumann boundary conditions.  To test the feasibility of the method, results were fixed for one problem and the networks/methods allowed to \textit{overfit} to see if some reasonable solution is obtained.  Aggregates were generated with Lloyd aggregation, using a seed ratio of $0.25$.  This gives a relatively high number of small aggregates, which may be somewhat unwanted in practice.
