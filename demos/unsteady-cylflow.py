@@ -11,10 +11,10 @@ sys.path.append(os.path.dirname(os.getcwd()))
 import ns
 import ns.preconditioner.PyAMG
 
-save_frames = False
+save_frames = True
 
-#M = Mesh('../mesh/wide_cyl_small.msh') # Using low-res mesh for testing
-M = Mesh('../mesh/wide_cyl_medium.msh')
+M = Mesh('../mesh/wide_cyl_tiny.msh')
+#M = Mesh('../mesh/wide_cyl_small.msh')
 x, y = SpatialCoordinate(M)
 print('Vertices in Mesh', M.num_vertices())
 print('Edges in mesh', M.num_edges())
@@ -94,12 +94,17 @@ solver_params = {
     # Momentum block
     "fieldsplit_0_pc_type": "python",
     "fieldsplit_0_ksp_type": "preonly",
-    #"fieldsplit_0_ksp_type": "gmres",
     "fieldsplit_0_pc_python_type": "firedrake.AssembledPC",
-    #"fieldsplit_0_assembled_pc_type": "lu",
     "fieldsplit_0_assembled_pc_type": "python",
-    "fieldsplit_0_assembled_pc_python_type": "ns.preconditioner.PyAMG",
+
+#    "fieldsplit_0_assembled_pc_python_type": "ns.preconditioner.MLAMG",
+    "fieldsplit_0_assembled_mlamg_amg_rtol": 1e-8,
+    "fieldsplit_0_assembled_mlamg_pnet_model": "../models/model_epoch_9.pth",
+
+    "fieldsplit_0_assembled_pc_python_type": "ns.preconditioner.MLAMG",
     "fieldsplit_0_assembled_pyamg_amg_rtol": 1e-8,
+    "fieldpslit_0_assembled_pyamg_amg_max_levels": 2,
+    "fieldsplit_0_assembled_pyamg_amg_precondition_with_gmres": False,
 
     # Schur complement
     "fieldsplit_1_ksp_type": "preonly",
@@ -127,6 +132,7 @@ u,p = up.split()
 
 T = 5
 n_t = int(T / dt)
+#n_t = 1
 vmin = 0
 vmax = 8
 
@@ -147,4 +153,4 @@ for i in range(1, n_t+1):
     plt.pause(0.01)
 
     if save_frames:
-        plt.savefig(f'frames/ns_{i:03d}.png', dpi=200)
+        plt.savefig(f'../frames/ns_{i:03d}.png', dpi=200)

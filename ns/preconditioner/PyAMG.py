@@ -7,6 +7,7 @@ import scipy.sparse.linalg as spla
 import functools
 import matplotlib.pyplot as plt
 import scipy.io as sio
+import traceback
 
 
 class PyAMG(PCBase):
@@ -14,6 +15,13 @@ class PyAMG(PCBase):
     _dump_mats = False
 
     def initialize(self, pc):
+        try:
+            self._initialize(pc)
+        except Exception as e:
+            traceback.print_exc()
+            raise e
+
+    def _initialize(self, pc):
         from firedrake.assemble import allocate_matrix, assemble
         _, P = pc.getOperators()
 
@@ -42,6 +50,8 @@ class PyAMG(PCBase):
         options_prefix = prefix + self._prefix
         opts = PETSc.Options()
         self.amg_rtol = opts.getScalar(f'{options_prefix}amg_rtol', 1e-8)
+        self.amg_max_levels = opts.getInt(f'{options_prefix}amg_max_levels', 10)
+        self.amg_precon_gmres = opts.getBool(f'{options_prefix}amg_precondition_with_gmres', True)
 
         mat_type = PETSc.Options().getString(options_prefix + "mat_type", "aij")
 
@@ -80,8 +90,8 @@ class PyAMG(PCBase):
         # Create PyAMG solver from CSR matrix
         row, col, val = Pmat.getValuesCSR()
         self.Pcsr = sp.csr_matrix((val, col, row))
-        #self.lu = spla.splu(self.Pcsr)
-        self.Amg = pyamg.classical.ruge_stuben_solver(self.Pcsr, strength=('classical', {'theta': 0.25}))
+        #self.Amg = pyamg.classical.ruge_stuben_solver(self.Pcsr, strength=('classical', {'theta': 0.5}), max_levels=self.amg_max_levels)
+        self.Amg = pyamg.aggregation.smoothed_aggregation_solver(self.Pcsr, max_levels=self.amg_max_levels)
         if PyAMG._dump_mats:
             self.dump_mat(pc, self.Pcsr)
 
@@ -99,9 +109,14 @@ class PyAMG(PCBase):
             return (context.Jp or context.J, context._problem.bcs)
 
     def apply(self, pc, X, Y):
-        y = self.Amg.solve(X.array_r, tol=self.amg_rtol, accel='gmres')
-        #y = spla.spsolve(self.Pcsr, X.array_r)
-        #y = self.lu.solve(X.array_r)
+        try:
+            self._apply(pc, X, Y)
+        except Exception as e:
+            traceback.print_exc()
+            raise e
+
+    def _apply(self, pc, X, Y):
+        y = self.Amg.solve(X.array_r, tol=self.amg_rtol, accel=('gmres' if self.amg_precon_gmres else None))
         Y.setArray(y)
 
     def applyTranspose(self, pc, X, Y):
