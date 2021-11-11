@@ -1,0 +1,288 @@
+\documentclass{article}
+
+\usepackage{lipsum}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{graphicx}
+\usepackage{epstopdf}
+\usepackage{algorithmic}
+\ifpdf%
+  \DeclareGraphicsExtensions{.eps,.pdf,.png,.jpg}
+\else
+  \DeclareGraphicsExtensions{.eps}
+\fi
+\usepackage{amsopn}
+\DeclareMathOperator{\diag}{diag}
+\usepackage{booktabs}
+\usepackage{bbm}
+\usepackage{bm}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1.5in]{geometry}
+\usepackage{hyperref}
+\usepackage[pdf]{graphviz}
+
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+\newcommand{\normtwo}[1]{\left\lVert#1\right\rVert_2}
+\newcommand{\abs}[1]{\left\lvert#1\right\rvert}
+\newcommand{\mat}[1]{\bm{{#1}}}
+\renewcommand{\vec}[1]{\bm{{#1}}}
+\newcommand{\lequiv}{\Leftrightarrow}
+\newcommand{\bigO}[1]{\mathcal{O}\!\left(#1\right)}
+\newcommand{\ceil}[1]{\left\lceil #1 \right\rceil}
+\newcommand{\floor}[1]{\left\lfloor #1 \right\rfloor}
+\newcommand{\sfrac}[2]{#1/#2}
+\newcommand{\hquad}{\enskip}
+\newcommand{\expected}[1]{\mathbb{E}\left[#1\right]}
+\newcommand{\mspan}[1]{\text{span}\left( #1 \right)}
+\newcommand{\prob}[1]{P\left(#1\right)}
+\newcommand{\probt}[1]{P\left( \text{#1} \right)}
+\newcommand{\condprob}[2]{P\left(#1 \:|\: #2\right)}
+\newcommand{\condprobt}[2]{P\left(\text{#1} \:|\: \text{#2}\right)}
+\newcommand{\bayes}[2]{\frac{\condprob{#2}{#1}\prob{#1}}{\prob{#2}}}
+\newcommand{\bayesx}[3]{\frac{\condprob{#2}{#1}\prob{#1}}{\condprob{#2}{#1}\prob{#1} + \condprob{#2}{#3}\prob{#3}}}
+\newcommand{\sech}{\text{sech}}
+\newcommand*{\vertbar}{\rule[-1ex]{0.5pt}{2.5ex}}
+\newcommand*{\horzbar}{\rule[.5ex]{2.5ex}{0.5pt}}
+\newcommand{\vect}[2]{\underline{{#1}}_{{#2}}}
+\newcommand{\basisp}[1]{\underline{{p}}_{{#1}}}
+\newcommand{\basisq}[1]{\underline{{q}}_{{#1}}}
+\newcommand{\coeff}[1]{\underline{{a}}_{{#1}}}
+\newcommand{\bestfit}{\underline{\bar{x}}}
+\newcommand{\grad}{\nabla}
+\newcommand{\laplace}{\Delta}
+\newcommand{\setbar}{\:\middle|\:}
+\renewcommand{\div}{\grad \cdot}
+\renewcommand{\Re}{\text{Re}}
+
+\begin{document}
+\section{Background}\label{sec:background}
+Currently, we are attempting to learn an interpolation operator $\mat{P}$ given a pre-existing aggregation of some system $\mat{A}$ by first learning $\mat{\hat{P}}$, then forming $\mat{P}=\mat{\hat{P}}\mat{\text{Agg}}$, for an aggregate assignment matrix $\mat{\text{Agg}}$.  This is analogous to smoothed aggregation AMG, where the $\mat{\hat{P}}$ is defined as $\mat{\hat{P}} = \left(\mat{I} - \mat{M}^{-1}\mat{A}\right)$ for some smoother $\mat{M}^{-1}$\cite{SA}.
+
+To test the method and neural network, we are fixing the problem to be a $n=9$ node 1D Poisson problem discretized with finite differences.  The nodes will be aggregated into 3 equal aggregates of 3 nodes each. We will examine using both Dirichlet \eqref{sec:dirichlet} and Neumann \eqref{sec:neumann} conditions and how the network output differs from the results smoothed aggregation gives.
+\section{Dirichlet Boundaries}\label{sec:dirichlet}
+For the dirichlet boundary case, we are using the following $\mat{A}$ matrix and aggregate information.
+\begin{equation}
+\mat{A} = \begin{bmatrix}
+2 & -1 &  &  &  &  &  &  &  \\
+-1 & 2 & -1 &  &  &  &  &  &  \\
+ & -1 & 2 & -1 &  &  &  &  &  \\
+ &  & -1 & 2 & -1 &  &  &  &  \\
+ &  &  & -1 & 2 & -1 &  &  &  \\
+ &  &  &  & -1 & 2 & -1 &  &  \\
+ &  &  &  &  & -1 & 2 & -1 &  \\
+ &  &  &  &  &  & -1 & 2 & -1 \\
+ &  &  &  &  &  &  & -1 & 2
+\end{bmatrix}
+\end{equation}
+\begin{equation}
+\text{Agg} =  \begin{bmatrix}
+1 &  &  \\
+1 &  &  \\
+1 &  &  \\
+ & 1 &  \\
+ & 1 &  \\
+ & 1 &  \\
+ &  & 1 \\
+ &  & 1 \\
+ &  & 1
+\end{bmatrix}\label{eq:aggs}
+\end{equation}
+
+Using a Jacobi smoother with $\omega=\frac{2}{3}$, the following operator is obtained for smoothed aggregation:
+\begin{equation}
+  \mat{I} - \frac{2}{3}\mat{D}^{-1}\mat{A} =
+  \begin{bmatrix}
+\sfrac{1}{3} & \sfrac{1}{3} &  &  &  &  &  &  &  \\
+\sfrac{1}{3} & \sfrac{1}{3} & \sfrac{1}{3} &  &  &  &  &  &  \\
+ & \sfrac{1}{3} & \sfrac{1}{3} & \sfrac{1}{3} &  &  &  &  &  \\
+ &  & \sfrac{1}{3} & \sfrac{1}{3} & \sfrac{1}{3} &  &  &  &  \\
+ &  &  & \sfrac{1}{3} & \sfrac{1}{3} & \sfrac{1}{3} &  &  &  \\
+ &  &  &  & \sfrac{1}{3} & \sfrac{1}{3} & \sfrac{1}{3} &  &  \\
+ &  &  &  &  & \sfrac{1}{3} & \sfrac{1}{3} & \sfrac{1}{3} &  \\
+ &  &  &  &  &  & \sfrac{1}{3} & \sfrac{1}{3} & \sfrac{1}{3} \\
+ &  &  &  &  &  &  & \sfrac{1}{3} & \sfrac{1}{3}
+\end{bmatrix},
+\end{equation}
+while from the graph network we obtain
+\begin{equation}
+  \mat{\hat{P}} =
+  \begin{bmatrix}
+0.433 & 0.441 &  &  &  &  &  &  &  \\
+0.333 & 0.438 & 0.221 &  &  &  &  &  &  \\
+ & 0.059 & 0.931 & 0.759 &  &  &  &  &  \\
+ &  & 0.759 & 0.931 & 0.957 &  &  &  &  \\
+ &  &  & 0.957 & 0.931 & 0.957 &  &  &  \\
+ &  &  &  & 0.957 & 0.931 & 0.759 &  &  \\
+ &  &  &  &  & 0.759 & 0.931 & 0.059 &  \\
+ &  &  &  &  &  & 0.221 & 0.438 & 0.333 \\
+ &  &  &  &  &  &  & 0.441 & 0.433
+\end{bmatrix}.
+\end{equation}
+
+Thus, right multiplying the ``smoothers'' gives us
+\begin{equation}
+  \mat{P}_{SA} = \begin{bmatrix}
+\sfrac{2}{3} &  &  \\
+1 &  &  \\
+\sfrac{2}{3} & \sfrac{1}{3} &  \\
+\sfrac{1}{3} & \sfrac{2}{3} &  \\
+ & 1 &  \\
+ & \sfrac{2}{3} & \sfrac{1}{3} \\
+ & \sfrac{1}{3} & \sfrac{2}{3} \\
+ &  & 1 \\
+ &  & \sfrac{2}{3}
+\end{bmatrix}
+\end{equation}
+and
+\begin{equation}
+  \mat{P}_{ML} =\begin{bmatrix}
+0.8746777 &  &  \\
+0.99204123 &  &  \\
+0.98971415 & 0.7593956 &  \\
+0.7593956 & 1.8878527 &  \\
+ & 2.8447313 &  \\
+ & 1.8878527 & 0.7593956 \\
+ & 0.7593956 & 0.9897142 \\
+ &  & 0.99204195 \\
+ &  & 0.8746774
+\end{bmatrix}.
+\end{equation}
+Note that the columns of $\mat{P}_{ML}$ have inconsistent scaling when compared to the SA operator; in practice this does not affect convergence as the scaling is undone by the coarse solve (a proof for this is given in \ref{sec:scaling_proof}).
+
+The above two interpolation operators give a convergence of $0.37275$ for SA and $0.29470$ for ML, meaning the graphnet is able to learn a more optimal interpolation than using only Jacobi to smooth the aggregates.
+\section{Neumann Boundaries}\label{sec:neumann}
+In the Neumann case, we have A defined as
+\begin{equation}
+\mat{A} = \begin{bmatrix}
+1 & -1 &  &  &  &  &  &  &  \\
+-1 & 2 & -1 &  &  &  &  &  &  \\
+ & -1 & 2 & -1 &  &  &  &  &  \\
+ &  & -1 & 2 & -1 &  &  &  &  \\
+ &  &  & -1 & 2 & -1 &  &  &  \\
+ &  &  &  & -1 & 2 & -1 &  &  \\
+ &  &  &  &  & -1 & 2 & -1 &  \\
+ &  &  &  &  &  & -1 & 2 & -1 \\
+ &  &  &  &  &  &  & -1 & 1
+\end{bmatrix},
+\end{equation}
+and reuse the aggregate information in \eqref{eq:aggs}.  Again using a Jacobi smoother with $\omega=\frac{2}{3}$, the following operator is obtained for smoothed aggregation:
+\begin{equation}
+\mat{I} - \frac{2}{3}\mat{D}^{-1}\mat{A} =  \begin{bmatrix}
+\sfrac{1}{3} & \sfrac{2}{3} &  &  &  &  &  &  &  \\
+\sfrac{1}{3} & \sfrac{1}{3} & \sfrac{1}{3} &  &  &  &  &  &  \\
+ & \sfrac{1}{3} & \sfrac{1}{3} & \sfrac{1}{3} &  &  &  &  &  \\
+ &  & \sfrac{1}{3} & \sfrac{1}{3} & \sfrac{1}{3} &  &  &  &  \\
+ &  &  & \sfrac{1}{3} & \sfrac{1}{3} & \sfrac{1}{3} &  &  &  \\
+ &  &  &  & \sfrac{1}{3} & \sfrac{1}{3} & \sfrac{1}{3} &  &  \\
+ &  &  &  &  & \sfrac{1}{3} & \sfrac{1}{3} & \sfrac{1}{3} &  \\
+ &  &  &  &  &  & \sfrac{1}{3} & \sfrac{1}{3} & \sfrac{1}{3} \\
+ &  &  &  &  &  &  & \sfrac{2}{3} & \sfrac{1}{3}
+\end{bmatrix}.
+\end{equation}
+Notice the major difference is the $\sfrac{2}{3}$ in the top-left and bottom-right corners.  Meanwhile with ML, we obtain a $\mat{\hat{P}}$ of
+\begin{equation}
+\mat{\hat{P}} =  \begin{bmatrix}
+4.444 & 4.432 &  &  &  &  &  &  &  \\
+4.449 & 4.445 & 4.339 &  &  &  &  &  &  \\
+ & 4.42 & 3.786 & 3.869 &  &  &  &  &  \\
+ &  & 3.868 & 3.784 & 2.483 &  &  &  &  \\
+ &  &  & 2.483 & 3.784 & 2.483 &  &  &  \\
+ &  &  &  & 2.483 & 3.784 & 3.868 &  &  \\
+ &  &  &  &  & 3.869 & 3.786 & 4.42 &  \\
+ &  &  &  &  &  & 4.339 & 4.445 & 4.449 \\
+ &  &  &  &  &  &  & 4.432 & 4.444
+\end{bmatrix}.
+\end{equation}
+Forming the smoothers gives
+\begin{equation}
+\mat{P}_{SA} = \begin{bmatrix}
+1 &  &  \\
+1 &  &  \\
+\sfrac{2}{3} & \sfrac{1}{3} &  \\
+\sfrac{1}{3} & \sfrac{2}{3} &  \\
+ & 1 &  \\
+ & \sfrac{2}{3} & \sfrac{1}{3} \\
+ & \sfrac{1}{3} & \sfrac{2}{3} \\
+ &  & 1 \\
+ &  & 1
+\end{bmatrix}
+\end{equation}
+and
+\begin{equation}
+\mat{P}_{ML}=\begin{bmatrix}
+8.876631 &  &  \\
+13.232742 &  &  \\
+8.206335 & 3.8687856 &  \\
+3.868087 & 6.266823 &  \\
+ & 8.749655 &  \\
+ & 6.266823 & 3.868087 \\
+ & 3.8687856 & 8.206335 \\
+ &  & 13.232742 \\
+ &  & 8.87663
+\end{bmatrix}.
+\end{equation}
+Note that with the Jacobi smoother, we appear to be handling the Neumann boundary conditions differently, while the ML smoother does not appear to handle them any differently from the Dirichlet case.  Because of this, the convergence factors are $0.35937$ for SA and $0.42993$ for ML.
+\subsection{Learning Neumann Conditions}
+As an experiment to see if the network can even represent the Neumann conditions at all, it was first trained in a supervised fashion to mimic the output of the SA smoother, then allowed to learn with the unsupervised loss to ``explore'' and hopefully obtain a more optimal interpolator.
+\begin{equation}
+\mat{\hat{P}} = \begin{bmatrix}
+0.862 & 0.602 &  &  &  &  &  &  &  \\
+0.984 & 0.88 & 0 &  &  &  &  &  &  \\
+ & 0.961 & 0.416 & 0.501 &  &  &  &  &  \\
+ &  & 0.501 & 0.416 & 0.432 &  &  &  &  \\
+ &  &  & 0.432 & 0.416 & 0.432 &  &  &  \\
+ &  &  &  & 0.432 & 0.416 & 0.501 &  &  \\
+ &  &  &  &  & 0.501 & 0.416 & 0.961 &  \\
+ &  &  &  &  &  & 0 & 0.88 & 0.984 \\
+ &  &  &  &  &  &  & 0.602 & 0.862
+\end{bmatrix}
+\end{equation}
+and
+\begin{equation}
+  \mat{P}_{SA} = \begin{bmatrix}
+1.4636066 &  &  \\
+1.863446 &  &  \\
+1.3770666 & 0.50145984 &  \\
+0.50145984 & 0.8478845 &  \\
+ & 1.2795522 &  \\
+ & 0.8478845 & 0.50145984 \\
+ & 0.50145984 & 1.3770669 \\
+ &  & 1.863446 \\
+ &  & 1.4636066
+\end{bmatrix}.
+\end{equation}
+This appears to indicate that the network can indeed represent the interpolation for Neumann conditions, and perhaps some tweaking of parameters is needed in order to push the network to learn such a representation.  For the $\mat{P}$ above, a convergence factor of $0.34305$ is obtained, matching SA's $0.35937$.
+\appendix
+\section{Proof of column scaling}\label{sec:scaling_proof}
+Scaling the columns of the interpolation by constant nonzero values does not affect the overall multigrid method.
+\begin{proof}
+  Let $\mat{P}$ be the unscaled interpolation operator, and $\mat{\bar{P}} = \mat{P} \mat{\Sigma}$ be the interpolation operator whose columns are scaled by some square, diagonal scaling matrix $\mat{\Sigma}$.  We assume $\mat{\Sigma}$ to have nonzero values on the diagonal.
+
+  Define the multigrid coarse grid solve as
+  \begin{equation}
+    \mat{A}_H\mat{e}_H = \mat{r}_H = \mat{\bar{P}}^T\mat{r}_h.
+  \end{equation}
+  This implies that
+  \begin{align}
+    \mat{e}_H &= \mat{A}_H^{-1} \mat{\bar{P}}^T\mat{r}_h \\
+              &= \left( \mat{\bar{P}}^T \mat{A}_h \mat{\bar{P}} \right)^{-1} \mat{\bar{P}}^T \mat{r}_h \\
+              &= \left( \mat{\Sigma}^T \mat{P} \mat{A}_h \mat{P}^T \mat{\Sigma} \right)^{-1} \mat{\Sigma}^T \mat{P}^T \mat{r}_h. \label{eq:coarse_E_final}
+  \end{align}
+  If we interpolate \eqref{eq:coarse_E_final} to the fine grid, we obtain
+  \begin{align}
+    \mat{e}_h &= \mat{\bar{P}} \mat{e}_H \\
+              &= \mat{P} \mat{\Sigma} \left( \mat{\Sigma}^T \mat{P}^T \mat{A}_h \mat{P} \mat{\Sigma} \right)^{-1} \mat{\Sigma}^T \mat{P}^T \mat{r}_h \\
+              &= \mat{P} \mat{\Sigma} \mat{\Sigma}^{-1} \left( \mat{P}^T \mat{A}_h \mat{P} \right)^{-1} \mat{\Sigma}^{-T} \mat{\Sigma}^T \mat{P}^T \mat{r}_h \\
+              &= \mat{P} \left( \mat{P}^T \mat{A}_h \mat{P} \right)^{-1}\mat{P}^T \mat{r}_h.
+  \end{align}
+  Thus, we obtain the regular multigrid cycle and the column scalings drop out.
+\end{proof}
+
+\nocite{*}
+\bibliographystyle{siam}
+\bibliography{agg_1d}
+\end{document}
