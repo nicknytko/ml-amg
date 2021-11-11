@@ -258,11 +258,11 @@ and
 This appears to indicate that the network can indeed represent the interpolation for Neumann conditions, and perhaps some tweaking of parameters is needed in order to push the network to learn such a representation.  For the $\mat{P}$ above, a convergence factor of $0.34305$ is obtained, matching SA's $0.35937$.
 \appendix
 \section{Proof of column scaling}\label{sec:scaling_proof}
-Scaling the columns of the interpolation by constant nonzero values does not affect the overall multigrid method.
+The multigrid cycle is invariant to any nonzero scaling of the columns of the interpolation operator.
 \begin{proof}
-  Let $\mat{P}$ be the unscaled interpolation operator, and $\mat{\bar{P}} = \mat{P} \mat{\Sigma}$ be the interpolation operator whose columns are scaled by some square, diagonal scaling matrix $\mat{\Sigma}$.  We assume $\mat{\Sigma}$ to have nonzero values on the diagonal.
+  Let $\mat{P}$ be the unscaled interpolation operator, and $\mat{\bar{P}} = \mat{P} \mat{\Sigma}$ be some operator whose columns are scaled by a square, diagonal scaling matrix $\mat{\Sigma}$.  We assume $\mat{\Sigma}$ to have nonzero values on the diagonal, i.e. that $\mat{\Sigma}$ is full rank and thus invertible.
 
-  Define the multigrid coarse grid solve as
+  Using the scaled interpolator, define the multigrid coarse grid solve as
   \begin{equation}
     \mat{A}_H\mat{e}_H = \mat{r}_H = \mat{\bar{P}}^T\mat{r}_h.
   \end{equation}
@@ -279,7 +279,7 @@ Scaling the columns of the interpolation by constant nonzero values does not aff
               &= \mat{P} \mat{\Sigma} \mat{\Sigma}^{-1} \left( \mat{P}^T \mat{A}_h \mat{P} \right)^{-1} \mat{\Sigma}^{-T} \mat{\Sigma}^T \mat{P}^T \mat{r}_h \\
               &= \mat{P} \left( \mat{P}^T \mat{A}_h \mat{P} \right)^{-1}\mat{P}^T \mat{r}_h.
   \end{align}
-  Thus, we obtain the regular multigrid cycle and the column scalings drop out.
+  Thus, the column scalings drop out and we recover the regular multigrid cycle.
 \end{proof}
 
 \nocite{*}
