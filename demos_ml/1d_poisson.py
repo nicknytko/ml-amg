@@ -13,6 +13,7 @@ import ns.model.agg_interp
 import ns.model.loss
 import ns.model.data
 import ns.lib.sparse
+import ns.lib.sparse_tensor
 import ns.lib.multigrid
 
 # This is a small demo to show we can learn interpolation for aggregation-based AMG
@@ -24,21 +25,6 @@ import ns.lib.multigrid
 
 neumann_solve = 'neumann' in sys.argv
 initial_supervise = 'supervise' in sys.argv
-
-def scipy_to_torch_sparse(A):
-    A = A.tocoo()
-    indices = torch.vstack([torch.Tensor(A.row), torch.Tensor(A.col)])
-    AT = torch.sparse_coo_tensor(indices, torch.Tensor(A.data), A.shape)
-    AT = AT.coalesce().float()
-    return AT
-
-
-def torch_sparse_to_scipy(T):
-    indices = np.array(T.indices())
-    coo =  sp.coo_matrix((np.array(T.values()),
-                         (indices[0], indices[1])),
-                         shape=np.array(T.shape))
-    return coo.tocsr()
 
 device = 'cpu'
 model = ns.model.agg_interp.PNet(64, device)
@@ -60,19 +46,19 @@ A = A.tocsr()
 print(' -- Problem setup --')
 print('A\n', A.todense())
 
-A_T = scipy_to_torch_sparse(A).to(device)
+A_T = ns.lib.sparse.to_torch_sparse(A).to(device)
 
 omega = 2. / 3.
 Agg = np.zeros((n, n_aggs))
 for agg in range(n_aggs):
     Agg[n_per_agg*agg:n_per_agg*(agg+1), agg] = 1.
 Agg = sp.csr_matrix(Agg)
-Agg_T = scipy_to_torch_sparse(Agg).to(device)
+Agg_T = ns.lib.sparse.to_torch_sparse(Agg).to(device)
 print('Agg\n', Agg.todense())
 
 Dinv = sp.diags([1.0 / A.diagonal()], [0])
 P_SA = (sp.eye(n) - omega*Dinv @ A) @ Agg
-P_SA_T = scipy_to_torch_sparse(P_SA).to(device)
+P_SA_T = ns.lib.sparse.to_torch_sparse(P_SA).to(device)
 A_Graph = ns.model.data.graph_from_matrix(A, Agg)
 
 lr = 0.001
@@ -116,9 +102,9 @@ with torch.no_grad():
     P_ml = model(A_Graph, Agg)
     P_hat_ml = model.forward_P_hat(A_Graph)
 
-P_ml = torch_sparse_to_scipy(P_ml)
+P_ml = ns.lib.sparse_tensor.to_scipy(P_ml)
 P_ml_norm = ns.lib.sparse.col_normalize_csr(P_ml, ord=np.inf)
-P_hat_ml = torch_sparse_to_scipy(P_hat_ml)
+P_hat_ml = ns.lib.sparse_tensor.to_scipy(P_hat_ml)
 
 print(' -- Interpolation operators --')
 print('SA\n', P_SA.todense())

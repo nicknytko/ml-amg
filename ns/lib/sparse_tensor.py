@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.linalg as tla
 import torch.sparse
 import torch_sparse as ts
+import numpy as np
+import scipy.sparse as sp
 
 def spspmm(A, B):
     '''
@@ -48,3 +50,10 @@ def diag(A):
         if j == k:
             d[j] = values[i]
     return d
+
+def to_scipy(T):
+    indices = np.array(T.indices())
+    coo =  sp.coo_matrix((np.array(T.values()),
+                         (indices[0], indices[1])),
+                         shape=np.array(T.shape))
+    return coo.tocsr()
