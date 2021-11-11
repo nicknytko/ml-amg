@@ -145,43 +145,42 @@ which gives a reasonable sparsity pattern for the interpolation, given $Agg$.  N
 Now that the average pooling technique has been introduced, the full algorithm for generating an interpolation operator $\mat{P}$ is defined below.
 \begin{enumerate}
 \item Given some sparse matrix $\mat{A}$, generate the graph $\mat{G}_{\mat{A}}$.
-\item Create aggregates using some established clustering algorithm, such as Lloyd.  Store this as $Agg$ and form $\hat{Agg}$ by normalizing the columns.
+\item Create aggregates using some established clustering algorithm, such as Lloyd.  Store this as $Agg$ and form $\hat{Agg}$ by normalizing the columns.  Here, instead of normalizing the columns we are weighting them according to the output of a small 2-layer graphnet.
 \item Create the binary inter-aggregate edge features $\theta_{ij}$ and append this to the edges of $\mat{G}_{\mat{A}}$.
 \item Pass $\mat{G}_{\mat{A}}$ to the graphnet and obtain back $\mat{G}^\prime_{\mat{A}}$, which is a graph containing the same number of nodes and edges, but each having different weights.
 \item Convert $\mat{G}^\prime_{\mat{A}}$ back into a matrix, we will denote this as $\mat{\hat{P}}$.
 \item Finally, create $\mat{P}=\mat{\hat{P}}\hat{Agg}$.  This is our final interpolation operator.
 \end{enumerate}
 
-\section{Problem Setup}
-The specific problem being solved is a diffusion problem with Neumann boundary conditions.  To test the feasibility of the method, results were fixed for one problem and the networks/methods allowed to \textit{overfit} to see if some reasonable solution is obtained.  Aggregates were generated with Lloyd aggregation, using a seed ratio of $0.25$.  This gives a relatively high number of small aggregates, which may be somewhat unwanted in practice.
-
-\begin{figure}[h]
-  \includegraphics[width=\textwidth]{figures/diffusion-lloyd-aggregates.pdf}
-  \caption{Specific problem being solved, with aggregate information.}
-  \label{fig:lloyd_aggregates}
-\end{figure}
+\section{Problem Description}
+The problem being solved is a diffusion problem with Neumann boundary conditions.  The graphnet was trained on a randomly-generated training set of 3000 graphs, and separately evalutaed on a testing set of 200 graphs.
 
 \section{Numerical Results}
-Using Lloyd to generate the aggregates and then generating $\mat{P}$ with a Jacobi prolongation smoother results in an AMG method with a convergence factor of approx. $0.6874$, as measured by the loss function.  This will be used as a baseline to compare the following results.
-
-All of the following plots are using the same random seeds, meaning both Lloyd aggregates and test vectors for the AMG loss should remain fixed for each training iteration.
+The graphnet was allowed to train for approximately 9000 training iterations, and the performance relative to a Jacobi smoother is shown on the testing set (\ref{fig:loss_testing}) and training set (\ref{fig:loss_training}).  Something to note is that both training and testing losses seem to flatten after about 4000 iterations, then do not move at all.  I worry that our gradients may be vanishing and the optimizer cannot make any progress.
 
 \begin{figure}[h]
-  \includegraphics[width=\textwidth]{figures/learn_p_directly.pdf}
-  \caption{Loss function when directly optimizing the nonzero entries of $\mat{P}$.  Using Adam optimizer with a learning rate of $0.01$.}
-  \label{fig:loss_p}
+  \includegraphics[width=\textwidth]{figures/graphnet_testing_loss.pdf}
+  \caption{Loss of the testing dataset, showing the ML method and a baseline Jacobi smoother.  Note how the curve stagnates after 4000 or so iterations.}
+  \label{fig:loss_testing}
 \end{figure}
 
 \begin{figure}[h]
-  \includegraphics[width=\textwidth]{figures/learn_p_hat.pdf}
-  \caption{Loss function when optimizing the nonzero entries of $\mat{\hat{P}}$, then forming $\mat{P}=\mat{\hat{P}}\hat{Agg}$.  Using Adam optimizer with a learning rate of $0.01$.}
-  \label{fig:loss_p_hat}
+  \includegraphics[width=\textwidth]{figures/graphnet_training_loss.pdf}
+  \caption{Loss of the training dataset, showing the ML method and a baseline Jacobi smoother.  The curves are oscillatory due to the small batch sizes used.  One should interpret the relative performance as the distance between the two curves.}
+  \label{fig:loss_training}
 \end{figure}
 
 \begin{figure}[h]
-  \includegraphics[width=\textwidth]{figures/learn_graphnet.pdf}
-  \caption{Loss function when using a Graphnet to generate $\mat{\hat{P}}$.  Using Adam optimizer with a learning rate of $10^{-5}$.}
-  \label{fig:loss_graphnet}
+  \includegraphics[width=\textwidth]{figures/testing_conv_perf.pdf}
+  \caption{Convergence factor of the ML method vs using the baseline Jacobi smoother on the testing set.  This is evaluated on an AMG solver for $\mat{Ax}=\vec{0}$ until $\normtwo{\vec{x}} \leq 10^{-10}$.}
+  \label{fig:testing_perf}
 \end{figure}
+
+\begin{figure}[h]
+  \includegraphics[width=\textwidth]{figures/training_conv_perf.pdf}
+  \caption{Convergence factor of the ML method vs using the baseline Jacobi smoother on the training set.  This is evaluated on an AMG solver for $\mat{Ax}=\vec{0}$ until $\normtwo{\vec{x}} \leq 10^{-10}$.}
+  \label{fig:testing_perf}
+\end{figure}
+
 
 \end{document}
