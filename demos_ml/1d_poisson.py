@@ -15,6 +15,9 @@ import ns.model.data
 import ns.lib.sparse
 import ns.lib.multigrid
 
+# This is a small demo to show we can learn interpolation for aggregation-based AMG
+# A small Poisson system is generated using finite differences, then solved for Ax=0
+
 ### Arguments:
 # pass 'neumann' to solve neumann system
 # pass 'supervise' to initially train the network to mimic the Jacobi smoother
