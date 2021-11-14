@@ -2,7 +2,9 @@ import torch
 import torch_geometric as tg
 import torch.nn as nn
 import torch.nn.functional as nnF
+import numpy as np
 import ns.lib.sparse as sparse
+import ns.model.data
 
 class TensorLambda(nn.Module):
     '''
@@ -37,7 +39,7 @@ class smallEdgeModel(nn.Module):
         return out
 
 class MPNN(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, node_activation=nn.ReLU(), edge_activation=nn.ReLU()):
         super(MPNN, self).__init__()
 
         self.conv1 = tg.nn.NNConv(1, dim, nn=nn.Sequential(
@@ -93,7 +95,10 @@ class MPNN(nn.Module):
         self.edge_model3 = smallEdgeModel(dim*2+2, dim, 2)
         self.edge_model4 = smallEdgeModel(dim*2+2, dim, 2)
         self.edge_model5 = smallEdgeModel(dim*2+2, dim, 2)
-        self.edge_model6 = smallEdgeModel(dim*2+2, dim, 1)
+        self.edge_model6 = smallEdgeModel(4, dim, 1)
+
+        self.node_activation = node_activation
+        self.edge_activation = edge_activation
 
 
     def forward(self, D):
@@ -124,10 +129,10 @@ class MPNN(nn.Module):
         edge_attr = nnF.relu(self.edge_model5(x[row], x[col], edge_attr.float())) + edge_attr
 
         # conv 6
-        x = nnF.relu(self.conv6(self.normalize6(x), edge_index, edge_attr)) + x
-        edge_attr = nnF.relu(self.edge_model6(x[row], x[col], edge_attr.float()))
+        x = self.node_activation(self.conv6(self.normalize6(x), edge_index, edge_attr))
+        edge_attr = self.edge_activation(self.edge_model6(x[row], x[col], edge_attr.float()))
 
-        return edge_attr
+        return x, edge_attr
 
 
 class ColumnWeightsNetwork(nn.Module):
@@ -162,7 +167,8 @@ class PNet(nn.Module):
         self.to(device)
 
     def forward_P_hat(self, data):
-        P_hat_vals = self.P_values.forward(data).squeeze()
+        nodes, edges = self.P_values.forward(data)
+        P_hat_vals = edges.squeeze()
         P_hat = torch.sparse_coo_tensor(data.edge_index, P_hat_vals, (data.x.shape[0], data.x.shape[0])).to(self.device)
 
         return P_hat.coalesce()
@@ -171,7 +177,8 @@ class PNet(nn.Module):
         agg_T = sparse.to_torch_sparse(agg_csr).to(self.device)
 
         # First, compute \hat{P}, or some matrix w/ same sparsity as A
-        P_hat_vals = self.P_values.forward(data).squeeze()
+        nodes, edges = self.P_values.forward(data)
+        P_hat_vals = edges.squeeze()
         P_hat = torch.sparse_coo_tensor(data.edge_index, P_hat_vals, (data.x.shape[0], data.x.shape[0])).to(self.device)
 
         # Find the optimal column re-weightings for Agg, and compute \hat{Agg}
@@ -180,3 +187,63 @@ class PNet(nn.Module):
 
         # Compute P := \hat{P} \hat{Agg}
         return torch.sparse.mm(P_hat, agg_T).coalesce()
+
+class FullAggNet(nn.Module):
+    '''
+    A model that outputs an interpolation operator for a matrix by internally
+    forming aggregates, then smoothing those aggregates.
+
+    Note that this currently does not pass gradients into the final interpolation
+    operator, so some gradient-free optimizer is needed to train such as particle
+    swarm or genetic algorithms.
+    '''
+
+    def __init__(self, dim=64):
+        super(FullAggNet, self).__init__()
+
+        self.PNet = MPNN(dim)
+        self.AggNet = MPNN(dim, node_activation=nn.Softmax(dim=0))
+
+    def forward(self, A, alpha):
+        '''
+        Parameters
+        ----------
+        A : scipy.sparse.csr_matrix
+          System to compute interpolation on
+        alpha : float
+          Ratio of nodes to use as aggregate centers.
+          This coarsens the fine grid by roughly 1/alpha
+
+        Returns
+        -------
+        agg : torch.sparse_coo_tensor
+          The aggregate assignment matrix
+        P : torch.sparse.coo_tensor
+          Interpolation operator, mapping from the coarse grid to fine grid.
+          The transpose will map from the fine grid to the coarse grid.
+        '''
+
+        m, n = A.shape
+        k = int(np.ceil(alpha * m))
+
+        # Compute aggregates
+        data_simple = ns.model.data.graph_from_matrix_basic(A)
+        nodes, edges = self.AggNet(data_simple)
+        nodes = nodes.squeeze(); edges = edges.squeeze()
+        BF_weights = torch.sparse_coo_tensor(data_simple.edge_index, edges, (m, n)).coalesce()
+
+        # Find cluster centers
+        top_k = torch.argsort(nodes)[:k]
+
+        # Run Bellman-Ford to assign each node to an aggregate
+        distance, nearest_center = ns.lib.graph.modified_bellman_ford(BF_weights, top_k)
+        agg_T = ns.lib.graph.nearest_center_to_agg(top_k, nearest_center)
+
+        # Compute the smoother \hat{P}
+        data = ns.model.data.graph_from_matrix(A, ns.lib.sparse_tensor.to_scipy(agg_T.detach()))
+        nodes, edges = self.PNet(data)
+        P_hat_vals = edges.squeeze()
+        P_hat = torch.sparse_coo_tensor(data.edge_index, P_hat_vals, (m, n)).coalesce()
+
+        # Now, form P := \hat{P} Agg.
+        return agg_T, torch.sparse.mm(P_hat, agg_T).coalesce()

@@ -17,7 +17,8 @@ def amg_2_v(A, P, b, x,
             jacobi_weight=0.666,
             res_tol=None,
             error_tol=None,
-            max_iter=500):
+            max_iter=500,
+            singular=False):
     '''
     Two-level AMG solver.
 
@@ -69,11 +70,15 @@ def amg_2_v(A, P, b, x,
         # Pre-relaxation
         x = jacobi(A, Dinv, b, x, omega=jacobi_weight, nu=pre_smoothing_steps)
         # Coarse-grid correction
-        x += P @ spla.spsolve(P.T@A@P, P.T@(b - A@x))
+        if singular:
+            x += P @ spla.lsqr(P.T@A@P, P.T@(b - A@x))[0]
+        else:
+            x += P @ spla.spsolve(P.T@A@P, P.T@(b - A@x))
         # Post-relaxation
         x = jacobi(A, Dinv, b, x, omega=jacobi_weight, nu=post_smoothing_steps)
         # Normalize with zero mean for singular systems w/ constant nullspace
-        x -= np.mean(x)
+        if singular:
+            x -= np.mean(x)
 
         # Compute error/residual norm
         if res_tol is not None:

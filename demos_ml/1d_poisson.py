@@ -27,7 +27,7 @@ neumann_solve = 'neumann' in sys.argv
 initial_supervise = 'supervise' in sys.argv
 
 device = 'cpu'
-model = ns.model.agg_interp.PNet(64, device)
+model = ns.model.agg_interp.PNet(75, device)
 
 n_aggs = 3
 n_per_agg = 3
@@ -77,7 +77,7 @@ if initial_supervise:
         optimizer.step()
     print('Finished supervised training')
 
-lr = 0.0001
+lr = 0.0025
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 # Unsupervised loss
 for i in range(200):
@@ -89,7 +89,7 @@ for i in range(200):
     test_vecs = test_vecs.to(device)
 
     loss = ns.model.loss.amg_loss(P, A_T, test_vecs,
-                                  tot_num_loop=5, no_prerelax=1,
+                                  tot_num_loop=20, no_prerelax=1,
                                   no_postrelax=1,  device=device,
                                   neumann_solve_fix=neumann_solve)
     loss.backward()
@@ -118,5 +118,5 @@ x = np.random.normal(0, 1, (A.shape[0],))
 b = np.zeros(A.shape[0])
 tol = 1e-10
 print(' -- Convergence Factors -- ')
-print('SA', ns.lib.multigrid.amg_2_v(A, P_SA, b, x, error_tol=tol)[1])
-print('ML', ns.lib.multigrid.amg_2_v(A, P_ml, b, x, error_tol=tol)[1])
+print('SA', ns.lib.multigrid.amg_2_v(A, P_SA, b, x, error_tol=tol, singular=neumann_solve)[1])
+print('ML', ns.lib.multigrid.amg_2_v(A, P_ml, b, x, error_tol=tol, singular=neumann_solve)[1])
