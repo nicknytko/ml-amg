@@ -3,6 +3,7 @@ import torch_geometric as tg
 import torch.nn as nn
 import torch.nn.functional as nnF
 import numpy as np
+import scipy.sparse as sp
 import ns.lib.sparse as sparse
 import ns.model.data
 
@@ -39,67 +40,52 @@ class smallEdgeModel(nn.Module):
         return out
 
 class MPNN(nn.Module):
-    def __init__(self, dim, node_activation=nn.ReLU(), edge_activation=nn.ReLU()):
+    def __init__(self, dim, node_activation=nn.ReLU(), edge_activation=nn.ReLU(), num_internal_conv=4):
         super(MPNN, self).__init__()
 
-        self.conv1 = tg.nn.NNConv(1, dim, nn=nn.Sequential(
+        # input -> hidden dim layer
+        self.node_conv_in = tg.nn.NNConv(1, dim, nn=nn.Sequential(
             TensorLambda(lambda x: x.reshape(-1, 2)),
             nn.Linear(2, 4), nn.ReLU(),
             nn.Linear(4, 16), nn.ReLU(),
             nn.Linear(16, 1 * dim), nn.ReLU()
         ))
-        self.normalize1 = tg.nn.norm.InstanceNorm(dim)
+        self.normalize_in = tg.nn.norm.InstanceNorm(dim)
+        self.edge_conv_in = smallEdgeModel(dim*2+2, dim, 2)
 
-        self.conv2 = tg.nn.NNConv(dim, dim, nn=nn.Sequential(
-            TensorLambda(lambda x: x.reshape(-1, 2)),
-            nn.Linear(2, 4), nn.ReLU(),
-            nn.Linear(4, 16), nn.ReLU(),
-            nn.Linear(16, dim * dim), nn.ReLU()
-        ))
-        self.normalize2 = tg.nn.norm.InstanceNorm(dim)
+        # Create 'n' internal layers
+        node_convs = []
+        edge_convs = []
+        normalizations = []
+        for i in range(num_internal_conv):
+            node_convs.append(
+                tg.nn.NNConv(dim, dim, nn=nn.Sequential(
+                    TensorLambda(lambda x: x.reshape(-1, 2)),
+                    nn.Linear(2, 4), nn.ReLU(),
+                    nn.Linear(4, 16), nn.ReLU(),
+                    nn.Linear(16, dim * dim), nn.ReLU()
+                ))
+            )
+            edge_convs.append(smallEdgeModel(dim*2+2, dim, 2))
+            normalizations.append(tg.nn.norm.InstanceNorm(dim))
+        self.node_convs = nn.ModuleList(node_convs)
+        self.edge_convs = nn.ModuleList(edge_convs)
+        self.normalizations = nn.ModuleList(normalizations)
+        self.num_internal_conv = num_internal_conv
 
-        self.conv3 = tg.nn.NNConv(dim, dim, nn=nn.Sequential(
-            TensorLambda(lambda x: x.reshape(-1, 2)),
-            nn.Linear(2, 4), nn.ReLU(),
-            nn.Linear(4, 16), nn.ReLU(),
-            nn.Linear(16, dim * dim), nn.ReLU()
-        ))
-        self.normalize3 = tg.nn.norm.InstanceNorm(dim)
-
-        self.conv4 = tg.nn.NNConv(dim, dim, nn=nn.Sequential(
-            TensorLambda(lambda x: x.reshape(-1, 2)),
-            nn.Linear(2, 4), nn.ReLU(),
-            nn.Linear(4, 16), nn.ReLU(),
-            nn.Linear(16, dim * dim), nn.ReLU()
-        ))
-        self.normalize4 = tg.nn.norm.InstanceNorm(dim)
-
-        self.conv5 = tg.nn.NNConv(dim, dim, nn=nn.Sequential(
-            TensorLambda(lambda x: x.reshape(-1, 2)),
-            nn.Linear(2, 4), nn.ReLU(),
-            nn.Linear(4, 16), nn.ReLU(),
-            nn.Linear(16, dim * dim), nn.ReLU()
-        ))
-        self.normalize5 = tg.nn.norm.InstanceNorm(dim)
-
-        self.conv6 = tg.nn.NNConv(dim, 1, nn=nn.Sequential(
+        # dim -> output layer
+        self.node_conv_out = tg.nn.NNConv(dim, 1, nn=nn.Sequential(
             TensorLambda(lambda x: x.reshape(-1, 2)),
             nn.Linear(2, 4), nn.ReLU(),
             nn.Linear(4, 16), nn.ReLU(),
             nn.Linear(16, dim * 1), nn.ReLU()
         ))
-        self.normalize6 = tg.nn.norm.InstanceNorm(dim)
+        self.normalize_out = tg.nn.norm.InstanceNorm(dim)
+        self.edge_conv_out = smallEdgeModel(4, dim, 1)
 
-        self.edge_model1 = smallEdgeModel(dim*2+2, dim, 2)
-        self.edge_model2 = smallEdgeModel(dim*2+2, dim, 2)
-        self.edge_model3 = smallEdgeModel(dim*2+2, dim, 2)
-        self.edge_model4 = smallEdgeModel(dim*2+2, dim, 2)
-        self.edge_model5 = smallEdgeModel(dim*2+2, dim, 2)
-        self.edge_model6 = smallEdgeModel(4, dim, 1)
-
+        # activations
         self.node_activation = node_activation
         self.edge_activation = edge_activation
-
 
     def forward(self, D):
         x, edge_index, edge_attr = D.x, D.edge_index, D.edge_attr
@@ -109,28 +95,16 @@ class MPNN(nn.Module):
         col = edge_index[1]
 
         # conv 1
-        x = nnF.relu(self.conv1(self.normalize1(x), edge_index, edge_attr)) + x
-        edge_attr = nnF.relu(self.edge_model1(x[row], x[col], edge_attr.float())) + edge_attr
+        x = nnF.relu(self.node_conv_in(self.normalize_in(x), edge_index, edge_attr)) + x
+        edge_attr = nnF.relu(self.edge_conv_in(x[row], x[col], edge_attr.float())) + edge_attr
 
-        # conv 2
-        x = nnF.relu(self.conv2(self.normalize2(x), edge_index, edge_attr)) + x
-        edge_attr = nnF.relu(self.edge_model2(x[row], x[col], edge_attr.float())) + edge_attr
-
-        # conv 3
-        x = nnF.relu(self.conv3(self.normalize3(x), edge_index, edge_attr)) + x
-        edge_attr = nnF.relu(self.edge_model3(x[row], x[col], edge_attr.float())) + edge_attr
-
-        # conv 4
-        x = nnF.relu(self.conv4(self.normalize4(x), edge_index, edge_attr)) + x
-        edge_attr = nnF.relu(self.edge_model4(x[row], x[col], edge_attr.float())) + edge_attr
-
-        # conv 5
-        x = nnF.relu(self.conv5(self.normalize5(x), edge_index, edge_attr)) + x
-        edge_attr = nnF.relu(self.edge_model5(x[row], x[col], edge_attr.float())) + edge_attr
+        for i in range(self.num_internal_conv):
+            x = nnF.relu(self.node_convs[i](self.normalizations[i](x), edge_index, edge_attr)) + x
+            edge_attr = nnF.relu(self.edge_convs[i](x[row], x[col], edge_attr.float())) + edge_attr
 
         # conv 6
-        x = self.node_activation(self.conv6(self.normalize6(x), edge_index, edge_attr))
-        edge_attr = self.edge_activation(self.edge_model6(x[row], x[col], edge_attr.float()))
+        x = self.node_activation(self.node_conv_out(self.normalize_out(x), edge_index, edge_attr))
+        edge_attr = self.edge_activation(self.edge_conv_out(x[row], x[col], edge_attr.float()))
 
         return x, edge_attr
 
@@ -201,8 +175,25 @@ class FullAggNet(nn.Module):
     def __init__(self, dim=64):
         super(FullAggNet, self).__init__()
 
-        self.PNet = MPNN(dim)
-        self.AggNet = MPNN(dim, node_activation=nn.Softmax(dim=0))
+        self.PNet = MPNN(dim//4, num_internal_conv=4)
+        self.AggNet = MPNN(dim, node_activation=nn.Identity(), num_internal_conv=1)
+
+    def forward_fixed_agg(self, A, agg):
+        m, n = A.shape
+
+        if isinstance(agg, sp.spmatrix):
+            agg_T = ns.lib.sparse.to_torch_sparse(agg)
+            agg_sp = agg
+        else:
+            agg_T = agg
+            agg_sp = ns.lib.sparse_tensor.to_scipy(agg)
+
+        data = ns.model.data.graph_from_matrix(A, agg_sp)
+        nodes, edges = self.PNet(data)
+        P_hat_vals = edges.squeeze()
+        P_hat = torch.sparse_coo_tensor(data.edge_index, P_hat_vals, (m, n)).coalesce()
+
+        return torch.sparse.mm(P_hat, agg_T).coalesce()
 
     def forward(self, A, alpha):
         '''
@@ -221,6 +212,10 @@ class FullAggNet(nn.Module):
         P : torch.sparse.coo_tensor
           Interpolation operator, mapping from the coarse grid to fine grid.
           The transpose will map from the fine grid to the coarse grid.
+        bf_weights : torch.sparse_coo_tensor
+          The weights matrix used for Bellman-Ford
+        cluster_centers : torch.Tensor
+          Centers of each cluster s.t. cluster_centers[i] is the root node of cluster i
         '''
 
         m, n = A.shape
@@ -246,4 +241,4 @@ class FullAggNet(nn.Module):
         P_hat = torch.sparse_coo_tensor(data.edge_index, P_hat_vals, (m, n)).coalesce()
 
         # Now, form P := \hat{P} Agg.
-        return agg_T, torch.sparse.mm(P_hat, agg_T).coalesce()
+        return agg_T, torch.sparse.mm(P_hat, agg_T).coalesce(), BF_weights, top_k
