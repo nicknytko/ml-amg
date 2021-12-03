@@ -108,35 +108,11 @@ class MPNN(nn.Module):
 
         return x, edge_attr
 
-
-class ColumnWeightsNetwork(nn.Module):
-    def __init__(self):
-        super(ColumnWeightsNetwork, self).__init__()
-
-        self.conv1 = tg.nn.NNConv(1, 4, nn=nn.Sequential(
-            TensorLambda(lambda x: x.reshape(-1, 3)),
-            nn.Linear(3, 4), nn.ReLU()
-        ))
-        self.act1 = nn.ReLU()
-        self.conv2 = tg.nn.NNConv(4, 1, nn=nn.Sequential(
-            TensorLambda(lambda x: x.reshape(-1, 3)),
-            nn.Linear(3, 4), nn.ReLU()
-        ))
-        self.act2 = nn.Sigmoid()
-
-
-    def forward(self, x, edge_index, edge_attr):
-        x = x.reshape((-1, 1))
-        x1 = self.act1(self.conv1(x, edge_index, edge_attr))
-        x2 = self.act2(self.conv2(x1, edge_index, edge_attr))
-        return x2
-
 class PNet(nn.Module):
     def __init__(self, dim, device):
         super(PNet, self).__init__()
 
         self.P_values = MPNN(dim)
-        self.P_column_weights = ColumnWeightsNetwork()
         self.device = device
         self.to(device)
 
@@ -155,12 +131,48 @@ class PNet(nn.Module):
         P_hat_vals = edges.squeeze()
         P_hat = torch.sparse_coo_tensor(data.edge_index, P_hat_vals, (data.x.shape[0], data.x.shape[0])).to(self.device)
 
-        # Find the optimal column re-weightings for Agg, and compute \hat{Agg}
-        # agg_weight_values = self.P_column_weights(agg_T.values(), network_data.edge_index, network_data.edge_attr).squeeze()
-        # agg_weighted = torch.sparse_coo_tensor(agg_T.indices(), agg_weight_values, agg_T.size()).to(self.device)
-
         # Compute P := \hat{P} \hat{Agg}
         return torch.sparse.mm(P_hat, agg_T).coalesce()
+
+class AggNet(nn.Module):
+    def __init__(self, node_activation=nn.ReLU(), edge_activation=nn.ReLU()):
+        super(AggNet, self).__init__()
+
+        self.norm1 = tg.nn.norm.InstanceNorm(1);  self.nc1 = tg.nn.ChebConv(1,  4, K=3)
+        self.norm2 = tg.nn.norm.InstanceNorm(4);  self.nc2 = tg.nn.ChebConv(4,  16, K=3)
+        self.norm3 = tg.nn.norm.InstanceNorm(16); self.nc3 = tg.nn.ChebConv(16, 64, K=3)
+        self.norm4 = tg.nn.norm.InstanceNorm(64); self.nc4 = tg.nn.ChebConv(64, 1, K=3)
+        self.ec1 = smallEdgeModel(1*2+1, 2, 1)
+        self.ec2 = smallEdgeModel(1*2+1, 2, 1)
+
+        self.lin1 = nn.Linear(85, 40)
+        self.lin2 = nn.Linear(40, 16)
+        self.lin3 = nn.Linear(16, 1)
+
+        self.node_activation = node_activation
+        self.edge_activation = edge_activation
+
+    def forward(self, D):
+        x, edge_index, edge_attr = D.x, D.edge_index, D.edge_attr
+        x = x.reshape((-1, 1))
+
+        row = edge_index[0]
+        col = edge_index[1]
+
+        x1 = nnF.relu(self.nc1(self.norm1(x), edge_index, edge_attr))
+        x2 = nnF.relu(self.nc2(self.norm2(x1), edge_index, edge_attr))
+        x3 = nnF.relu(self.nc3(self.norm3(x2), edge_index, edge_attr))
+        x4 = nnF.relu(self.nc4(self.norm4(x3), edge_index, edge_attr))
+
+        x_stack = torch.column_stack((x1, x2, x3, x4))
+        x = nnF.relu(self.lin1(x_stack))
+        x = nnF.relu(self.lin2(x))
+        x = self.node_activation(self.lin3(x))
+
+        edge_attr = nnF.relu(self.ec1(x[row], x[col], edge_attr.float()))
+        edge_attr = self.edge_activation(self.ec2(x[row], x[col], edge_attr.float()))
+
+        return x, edge_attr
 
 class FullAggNet(nn.Module):
     '''
@@ -172,11 +184,18 @@ class FullAggNet(nn.Module):
     swarm or genetic algorithms.
     '''
 
-    def __init__(self, dim=64):
+    def __init__(self, dim=64, use_pnet=True, use_aggnet=True):
         super(FullAggNet, self).__init__()
 
-        self.PNet = MPNN(dim//4, num_internal_conv=4)
-        self.AggNet = MPNN(dim, node_activation=nn.Identity(), num_internal_conv=1)
+        if use_pnet:
+            self.PNet = MPNN(dim, num_internal_conv=4)
+        else:
+            self.PNet = None
+
+        if use_aggnet:
+            self.AggNet = AggNet()
+        else:
+            self.AggNet = None
 
     def forward_fixed_agg(self, A, agg):
         m, n = A.shape
@@ -216,29 +235,35 @@ class FullAggNet(nn.Module):
           The weights matrix used for Bellman-Ford
         cluster_centers : torch.Tensor
           Centers of each cluster s.t. cluster_centers[i] is the root node of cluster i
+        node_weights : torch.Tensor
+          Value of each node when scoring is applied to pick centers.
         '''
 
         m, n = A.shape
         k = int(np.ceil(alpha * m))
 
-        # Compute aggregates
+        # Compute node scores and edge weights
         data_simple = ns.model.data.graph_from_matrix_basic(A)
-        nodes, edges = self.AggNet(data_simple)
-        nodes = nodes.squeeze(); edges = edges.squeeze()
+        node_scores, edges = self.AggNet(data_simple)
+        node_scores = node_scores.squeeze(); edges = edges.squeeze()
         BF_weights = torch.sparse_coo_tensor(data_simple.edge_index, edges, (m, n)).coalesce()
 
         # Find cluster centers
-        top_k = torch.argsort(nodes)[:k]
+        top_k = torch.argsort(node_scores, descending=True)[:k]
 
         # Run Bellman-Ford to assign each node to an aggregate
         distance, nearest_center = ns.lib.graph.modified_bellman_ford(BF_weights, top_k)
         agg_T = ns.lib.graph.nearest_center_to_agg(top_k, nearest_center)
 
-        # Compute the smoother \hat{P}
-        data = ns.model.data.graph_from_matrix(A, ns.lib.sparse_tensor.to_scipy(agg_T.detach()))
-        nodes, edges = self.PNet(data)
-        P_hat_vals = edges.squeeze()
-        P_hat = torch.sparse_coo_tensor(data.edge_index, P_hat_vals, (m, n)).coalesce()
+        if self.PNet:
+            # Compute the smoother \hat{P}
+            data = ns.model.data.graph_from_matrix(A, ns.lib.sparse_tensor.to_scipy(agg_T.detach()))
+            nodes, edges = self.PNet(data)
+            P_hat_vals = edges.squeeze()
+            P_hat = torch.sparse_coo_tensor(data.edge_index, P_hat_vals, (m, n)).coalesce()
+            # Now, form P := \hat{P} Agg.
+            P = torch.sparse.mm(P_hat, agg_T).coalesce()
+        else:
+            P = None
 
-        # Now, form P := \hat{P} Agg.
-        return agg_T, torch.sparse.mm(P_hat, agg_T).coalesce(), BF_weights, top_k
+        return agg_T, P, BF_weights, top_k, node_scores

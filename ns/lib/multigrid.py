@@ -5,6 +5,7 @@ import scipy
 import scipy.linalg as sla
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
+import warnings
 
 def jacobi(A, Dinv, b, x, omega=0.666, nu=2):
     for i in range(nu):
@@ -64,6 +65,13 @@ def amg_2_v(A, P, b, x,
     Dinv = sp.diags(1.0/A.diagonal())
     n = A.shape[0]
 
+    A_H = P.T@A@P
+    if not singular:
+        try:
+            A_H_LU = spla.factorized(A_H)
+        except:
+            return x, np.float64(1.), err, 0
+
     while True:
         x = x.copy()
 
@@ -73,7 +81,8 @@ def amg_2_v(A, P, b, x,
         if singular:
             x += P @ spla.lsqr(P.T@A@P, P.T@(b - A@x))[0]
         else:
-            x += P @ spla.spsolve(P.T@A@P, P.T@(b - A@x))
+            x += P @ A_H_LU(P.T@(b - A@x))
+
         # Post-relaxation
         x = jacobi(A, Dinv, b, x, omega=jacobi_weight, nu=post_smoothing_steps)
         # Normalize with zero mean for singular systems w/ constant nullspace

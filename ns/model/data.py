@@ -7,6 +7,9 @@ import pyamg
 import matplotlib.pyplot as plt
 import matplotlib
 
+import pyamg.gallery.mesh
+import pyamg.gallery.fem
+
 import shapely.geometry as sg
 from shapely.ops import cascaded_union
 
@@ -33,13 +36,7 @@ def graph_from_matrix_basic(A):
     G = nx.from_scipy_sparse_matrix(A, edge_attribute='weight', parallel_edges=False, create_using=nx.DiGraph)
     x = torch.ones(n) / n
 
-    # Create cluster feature
-    cluster_adj = {} # 0 if in same cluster, 1 if not
-    for (u, v) in nx.edges(G):
-        cluster_adj[(u, v)] = 1.0 / n
-
-    nx.set_edge_attributes(G, cluster_adj, 'cluster_adj')
-    nx_data = tg.utils.from_networkx(G, None, ['weight', 'cluster_adj'])
+    nx_data = tg.utils.from_networkx(G, None, ['weight'])
     return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=abs(nx_data.edge_attr.float()))
 
 class Grid():
@@ -133,7 +130,7 @@ class Grid():
                         todraw.append(newobj)
 
             todraw = cascaded_union(todraw)                    # union all objects in the aggregate
-            todraw = todraw.buffer(0.08)                        # expand to smooth
+            todraw = todraw.buffer(0.07)                       # expand to smooth
             todraw = todraw.buffer(-0.05)                      # then contract
 
             try:
@@ -219,51 +216,81 @@ class Grid():
         Grid object with given parameters.
         '''
 
-        x_pts = np.linspace(xdim[0], xdim[1], n_pts_x+2)[1:-1]
-        y_pts = np.linspace(xdim[0], ydim[1], n_pts_y+2)[1:-1]
-        delta_x = abs(x_pts[1] - x_pts[0])
-        delta_y = abs(y_pts[1] - y_pts[0])
+        # Set up diffusion coefficient
+        def kappa(x, y):
+            c, s = np.cos(theta), np.sin(theta)
+            Q = np.array([
+                [c, -s],
+                [s, c]
+            ])
+            A = np.diag([1., epsilon])
+            return Q@A@Q.T
 
-        xx, yy = np.meshgrid(x_pts, y_pts)
-        xx = xx.flatten()
-        yy = yy.flatten()
+        # Structured mesh
+        v, e = pyamg.gallery.mesh.regular_triangle_mesh(n_pts_x + 2, n_pts_y + 2)
 
-        grid_x = np.column_stack((xx, yy))
-        n = n_pts_x * n_pts_y
-        A = sp.lil_matrix((n, n), dtype=np.float64)
+        # Create boundary mask and boundary restriction operator, R
+        boundary_mask = np.logical_or(
+            np.logical_or(v[:, 0] == 0., v[:, 0] == 1.),
+            np.logical_or(v[:, 1] == 0., v[:, 1] == 1.)
+        )
+        interior_mask = np.logical_not(boundary_mask)
+        R = (sp.eye(v.shape[0]).tocsc())[:, interior_mask]
 
-        stencil = pyamg.gallery.diffusion_stencil_2d(epsilon=epsilon, theta=theta, type='FD')
-        print(stencil)
+        # Update coordinates to lie within domain bounds
+        v[:,0] = (v[:,0] + xdim[0]) * (xdim[1] - xdim[0])
+        v[:,1] = (v[:,1] + ydim[0]) * (ydim[1] - ydim[0])
 
-        for i in range(n_pts_x):
-            for j in range(n_pts_y):
-                idx = i + j*n_pts_x
-
-                A[idx, idx] = stencil[1,1]
-                has_left = (i>0)
-                has_right = (i<n_pts_x-1)
-                has_down = (j>0)
-                has_up = (j<n_pts_y-1)
-
-                # NSEW connections
-                if has_up:
-                    A[idx, idx + n_pts_x] = stencil[0, 1]
-                if has_down:
-                    A[idx, idx - n_pts_x] = stencil[2, 1]
-                if has_left:
-                    A[idx, idx - 1] = stencil[1, 0]
-                if has_right:
-                    A[idx, idx + 1] = stencil[1, 2]
-
-                # diagonal connections
-                if has_up and has_left:
-                    A[idx, idx + n_pts_x - 1] = stencil[0, 0]
-                if has_up and has_right:
-                    A[idx, idx + n_pts_x + 1] = stencil[0, 2]
-                if has_down and has_left:
-                    A[idx, idx - n_pts_x - 1] = stencil[2, 0]
-                if has_down and has_right:
-                    A[idx, idx - n_pts_x + 1] = stencil[2, 2]
+        # Discretize w/ linear finite elements
+        mesh = pyamg.gallery.fem.mesh(v, e, degree=1)
+        A, _ = pyamg.gallery.fem.gradgradform(mesh, kappa=kappa, degree=1)
         A = A.tocsr()
 
-        return Grid(A, grid_x)
+        return Grid(R.T@A@R, R.T@v)
+
+    def structured_2d_poisson_neumann(n_pts_x, n_pts_y,
+                                      xdim=(0,1), ydim=(0,1),
+                                      epsilon=1.0, theta=0.0):
+        '''
+        Creates a 2D poisson system on a structured grid, discretized using finite elements.
+        Homogeneous neumann boundary conditions are assumed.
+
+        Parameters
+        ----------
+        n_pts_x : integer
+          Number of points in the x dimension (including boundary points)
+        n_pts_y : integer
+          Number of points in the y dimension (including boundary points)
+        xdim : tuple (float, float)
+          Bounds for domain in x dimension.  Represents smallest and largest x values.
+        ydim : tuple (float, float)
+          Bounds for domain in y dimension.  Represents smallest and largest y values.
+
+        Returns
+        -------
+        Grid object with given parameters.
+        '''
+
+        # Set up diffusion coefficient
+        def kappa(x, y):
+            c, s = np.cos(theta), np.sin(theta)
+            Q = np.array([
+                [c, -s],
+                [s, c]
+            ])
+            A = np.diag([1., epsilon])
+            return Q@A@Q.T
+
+        # Structured mesh
+        v, e = pyamg.gallery.mesh.regular_triangle_mesh(n_pts_x, n_pts_y)
+
+        # Update coordinates to lie within domain bounds
+        v[:,0] = (v[:,0] + xdim[0]) * (xdim[1] - xdim[0])
+        v[:,1] = (v[:,1] + ydim[0]) * (ydim[1] - ydim[0])
+
+        # Discretize w/ linear finite elements
+        mesh = pyamg.gallery.fem.mesh(v, e, degree=1)
+        A, _ = pyamg.gallery.fem.gradgradform(mesh, kappa=kappa, degree=1)
+        A = A.tocsr()
+
+        return Grid(A, v)

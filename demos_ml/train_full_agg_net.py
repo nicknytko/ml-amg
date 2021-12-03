@@ -24,27 +24,48 @@ import ns.lib.sparse_tensor
 import ns.lib.multigrid
 import ns.lib.graph
 
+def parse_bool_str(v):
+    v = v.lower()
+    if v == 't' or v == 'true':
+        return True
+    else:
+        return False
+
 parser = argparse.ArgumentParser(description='Demo of the aggregate-picking network')
-parser.add_argument('--system', choices=['1d_neumann', '1d_dirichlet', '2d_isotropic', '2d_anisotropic'], required=True)
-parser.add_argument('--n', type=int, default=None)
-parser.add_argument('--max-generations', type=int, default=500)
-parser.add_argument('--initial-population-size', type=int, default=50)
-parser.add_argument('--ml-aggregator', type=bool, default=True)
-parser.add_argument('--ml-interpolator', type=bool, default=True)
+parser.add_argument('system', choices=['1d_neumann', '1d_dirichlet', '2d_isotropic', '2d_anisotropic'], help='Problem selection to run demo on')
+parser.add_argument('--n', type=int, default=None, help='Size of the system.  In 2d, this determines the legnth in one dimension')
+parser.add_argument('--max-generations', type=int, default=500, help='Maximum number of training generations')
+parser.add_argument('--initial-population-size', type=int, default=50, help='Initial population size')
+parser.add_argument('--ml-aggregator', type=parse_bool_str, default=True, help='Whether to use the ML network for aggregation (true) or use some baseline (false)')
+parser.add_argument('--ml-interpolator', type=parse_bool_str, default=True, help='Whether to use the ML network for interpolation (true) or use a Jacobi smoother (false)')
+parser.add_argument('--alpha', type=float, default=None, help='Coarsening ratio for aggregation')
 args = parser.parse_args()
 
 N = args.n
 neumann_solve = False
 ml_aggregator = args.ml_aggregator
 ml_interpolator = args.ml_interpolator
-fig_directory = f'{args.system}_figures'
+
+if ml_aggregator and ml_interpolator:
+    suffix = 'full'
+    title = 'ML aggregates and interpolation'
+elif ml_aggregator:
+    suffix = 'agg'
+    title = 'ML Aggregates, SA'
+else:
+    suffix = 'interp'
+    title = 'Lloyd, ML interpolation'
+
+fig_directory = f'figures/{args.system}_figures_{suffix}'
+alpha = args.alpha
 
 if not os.path.exists(fig_directory):
     os.mkdir(fig_directory)
 
 if args.system == '1d_dirichlet':
     figure_size = (10,3)
-    alpha = 1. / 3.
+    if alpha is None:
+        alpha = 1. / 3.
     if N is None:
         N = 9
     n = N
@@ -62,7 +83,8 @@ elif args.system == '1d_neumann':
     neumann_solve = True
     figure_size = (10,3)
 
-    alpha = 1. / 3.
+    if alpha is None:
+        alpha = 1. / 3.
     if N is None:
         N = 9
     n = N
@@ -78,22 +100,30 @@ elif args.system == '1d_neumann':
     Agg = sp.csr_matrix(Agg)
 elif args.system == '2d_isotropic':
     figure_size = (10,10)
-    alpha = 1. / 9.
+    if alpha is None:
+        alpha = 1. / 9.
     if N is None:
         N = 8
     n = N**2
     grid = ns.model.data.Grid.structured_2d_poisson_dirichlet(N, N)
     A = grid.A
+
+    np.random.seed(0)
     Agg, Agg_roots = pyamg.aggregation.lloyd_aggregation(A, ratio=alpha)
 elif args.system == '2d_anisotropic':
     figure_size = (10,10)
-    alpha = 1. / 9.
+    if alpha is None:
+        alpha = 1. / 9.
     if N is None:
         N = 8
     n = N**2
     grid = ns.model.data.Grid.structured_2d_poisson_dirichlet(N, N, epsilon=0.001, theta=np.pi/6)
     A = grid.A
+
+    np.random.seed(0)
     Agg, Agg_roots = pyamg.aggregation.lloyd_aggregation(A, ratio=alpha)
+
+np.random.seed()
 
 device = 'cpu'
 
@@ -101,14 +131,17 @@ A_T = ns.lib.sparse.to_torch_sparse(A).to(device)
 print(' -- Problem setup --')
 print('A\n', A.todense())
 
-omega = 2. / 3.
+# Set up Jacobi smoother
 Dinv = sp.diags([1.0 / A.diagonal()], [0])
+omega = (4. / 3.) / np.abs(spla.eigs(Dinv @ A, k=1, return_eigenvectors=False)).item()
+smoother = (sp.eye(n) - omega*Dinv@A)
+P_SA = smoother @ Agg
+
+# Create PyTorch tensor versions of everything
+smoother_T = ns.lib.sparse.to_torch_sparse(smoother).to(device)
 Agg_T = ns.lib.sparse.to_torch_sparse(Agg).to(device)
 Agg_roots_T = torch.Tensor(Agg_roots)
-smoother = (sp.eye(n) - omega*Dinv@A)
-smoother_T = ns.lib.sparse.to_torch_sparse(smoother).to(device)
 A_Graph = ns.model.data.graph_from_matrix_basic(A)
-P_SA = smoother @ Agg
 
 def print_mat_rows(P, round_digits=5):
     if isinstance(P, torch.Tensor) and P.is_sparse:
@@ -129,10 +162,9 @@ def print_mat_rows(P, round_digits=5):
             s_ += s + ' '
         s_ += ']'
         print(s_)
-print_mat_rows(P_SA)
 
 def compute_agg_and_p(weights):
-    model = ns.model.agg_interp.FullAggNet(64)
+    model = ns.model.agg_interp.FullAggNet(64, use_aggnet=ml_aggregator, use_pnet=ml_interpolator)
     model.load_state_dict(pygad.torchga.model_weights_as_dict(model, weights))
     model.eval()
 
@@ -141,14 +173,15 @@ def compute_agg_and_p(weights):
             agg_T = Agg_T
             P = model.forward_fixed_agg(A, Agg)
             bf_weights = A_T
-            cluster_centers = Agg_roots_T
+            cluster_centers = Agg_roots_T.int()
+            node_scores = torch.zeros(A.shape[0])
         else:
-            agg_T, P, bf_weights, cluster_centers = model.forward(A, alpha)
+            agg_T, P, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
             agg_sp = ns.lib.sparse_tensor.to_scipy(agg_T)
             if not ml_interpolator:
                 P = ns.lib.sparse.to_torch_sparse(smoother @ agg_sp)
 
-    return agg_T, P, bf_weights, cluster_centers
+    return agg_T, P, bf_weights, cluster_centers, node_scores
 
 def loss_fcn(A, P_T):
     P = ns.lib.sparse_tensor.to_scipy(P_T)
@@ -156,23 +189,19 @@ def loss_fcn(A, P_T):
     x = np.random.randn(A.shape[1])
     x /= la.norm(x, 2)
 
-    ret = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve)
+    ret = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega)
     return ret[1]
 
 def fitness(weights, weights_idx):
-    model = ns.model.agg_interp.FullAggNet(64)
-    model.load_state_dict(pygad.torchga.model_weights_as_dict(model, weights))
-    model.eval()
-
-    agg, P, bf_weights, cluster_centers = compute_agg_and_p(weights)
+    agg, P, bf_weights, cluster_centers, node_scores = compute_agg_and_p(weights)
     loss = loss_fcn(A, P)
 
-    if np.isnan(loss.item()):
+    if np.isnan(loss.item()) or loss.item() == 1.:
         return 0
     else:
         return 1.0 / loss
 
-def plot_grid(agg, bf_weights, cluster_centers):
+def plot_grid(agg, bf_weights, cluster_centers, node_scores):
     graph = grid.networkx
     positions = {}
     for node in graph.nodes:
@@ -182,14 +211,18 @@ def plot_grid(agg, bf_weights, cluster_centers):
     for i, edge in enumerate(graph.edges):
         edge_values[i] = bf_weights[edge]
 
+    if isinstance(node_scores, torch.Tensor):
+        node_scores = node_scores.numpy()
+    node_scores = np.log10(node_scores + 1)
+
     grid.plot_agg(agg)
-    nx.drawing.nx_pylab.draw_networkx(graph, ax=plt.gca(), pos=positions, arrows=False, with_labels=False, node_size=100, edge_color=edge_values)
-    plt.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'y*', markersize=20)
+    nx.drawing.nx_pylab.draw_networkx(graph, ax=plt.gca(), pos=positions, arrows=False, with_labels=False, node_size=100, edge_color=edge_values, node_color=node_scores)
+    plt.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'r*', markersize=6)
     plt.gca().set_aspect('equal')
 
 plt.ion()
 plt.figure(figsize=figure_size)
-plot_grid(Agg, A, Agg_roots)
+plot_grid(Agg, A, Agg_roots, torch.zeros(A.shape[0]))
 plt.title(f'Baseline, conv={loss_fcn(A, ns.lib.sparse.to_torch_sparse(P_SA)):.4f}')
 plt.savefig(f'{fig_directory}/baseline.pdf')
 plt.pause(0.1)
@@ -198,23 +231,26 @@ def display_progress(ga_instance):
     weights = ga_instance.best_solution()
     gen = ga_instance.generations_completed
 
-    agg, P, bf_weights, cluster_centers = compute_agg_and_p(weights[0])
+    agg, P, bf_weights, cluster_centers, node_scores = compute_agg_and_p(weights[0])
     agg = ns.lib.sparse_tensor.to_scipy(agg)
 
     print(f'Generation = {gen}')
     print(f'Fitness    = {weights[1]}')
     print(f'Loss       = {1.0/weights[1]}')
-    print('P')
-    print_mat_rows(P)
 
     plt.clf()
-    plot_grid(agg, bf_weights, cluster_centers)
-    plt.title(f'Generation {gen}, conv={1.0/weights[1]:.4f}')
+    plot_grid(agg, bf_weights, cluster_centers, node_scores)
+    plt.title(f'Generation {gen}, {title}, conv={1.0/weights[1]:.4f}')
     plt.pause(0.1)
     plt.savefig(f'{fig_directory}/{gen}_agg.pdf')
 
+    model = ns.model.agg_interp.FullAggNet(64, use_aggnet=ml_aggregator, use_pnet=ml_interpolator)
+    model.load_state_dict(pygad.torchga.model_weights_as_dict(model, weights[0]))
+    model.eval()
+    torch.save(model.state_dict(), f'models/{args.system}_{suffix}')
+
 if __name__ == '__main__':
-    model = ns.model.agg_interp.FullAggNet(64)
+    model = ns.model.agg_interp.FullAggNet(64, use_aggnet=ml_aggregator, use_pnet=ml_interpolator)
     initial_population = pygad.torchga.TorchGA(model=model, num_solutions=args.initial_population_size).population_weights
     ga_instance = pygad.GA(num_generations=args.max_generations,
                            num_parents_mating=5,
