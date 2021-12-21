@@ -7,6 +7,9 @@ def col_normalize_csr(A_sp, ord=1):
     '''
     Normalizes the columns of a sparse CSR matrix.
     '''
+    if not sp.isspmatrix_csr(A_sp):
+        A_sp = A_sp.tocsr()
+
     norms = spla.norm(A_sp, axis=0, ord=ord)
     new_data = A_sp.data / norms[A_sp.indices] # divide each nonzero by its respective column norm
     return sp.csr_matrix((new_data, A_sp.indices, A_sp.indptr), A_sp.shape)

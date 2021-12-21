@@ -59,8 +59,12 @@ else:
 fig_directory = f'figures/{args.system}_figures_{suffix}'
 alpha = args.alpha
 
+if not os.path.exists('figures'):
+    os.mkdir('figures')
 if not os.path.exists(fig_directory):
     os.mkdir(fig_directory)
+if not os.path.exists('models'):
+    os.mkdir('models')
 
 if args.system == '1d_dirichlet':
     figure_size = (10,3)
@@ -186,8 +190,10 @@ def compute_agg_and_p(weights):
 def loss_fcn(A, P_T):
     P = ns.lib.sparse_tensor.to_scipy(P_T)
     b = np.zeros(A.shape[1])
+    np.random.seed(0)
     x = np.random.randn(A.shape[1])
     x /= la.norm(x, 2)
+    np.random.seed()
 
     ret = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega)
     return ret[1]
@@ -201,8 +207,9 @@ def fitness(weights, weights_idx):
     else:
         return 1.0 / loss
 
-def plot_grid(agg, bf_weights, cluster_centers, node_scores):
+def plot_grid(agg, P, bf_weights, cluster_centers, node_scores):
     graph = grid.networkx
+    graph.remove_edges_from(list(nx.selfloop_edges(graph)))
     positions = {}
     for node in graph.nodes:
         positions[node] = grid.x[node]
@@ -215,14 +222,19 @@ def plot_grid(agg, bf_weights, cluster_centers, node_scores):
         node_scores = node_scores.numpy()
     node_scores = np.log10(node_scores + 1)
 
-    grid.plot_agg(agg)
-    nx.drawing.nx_pylab.draw_networkx(graph, ax=plt.gca(), pos=positions, arrows=False, with_labels=False, node_size=100, edge_color=edge_values, node_color=node_scores)
-    plt.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'r*', markersize=6)
+    if not isinstance(P, sp.spmatrix):
+        P = ns.lib.sparse_tensor.to_scipy(P)
+
+    plt.gcf().set_size_inches(figure_size[0], figure_size[1])
+    nx.drawing.nx_pylab.draw_networkx(graph, ax=plt.gca(), pos=positions, arrows=False, with_labels=False, node_size=60, edge_color=edge_values, node_color=node_scores)
+    grid.plot_agg(agg, alpha=0.1, edgecolor='0.2')
+    grid.plot_spider_agg(agg, P)
+    plt.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'y*', markersize=10)
     plt.gca().set_aspect('equal')
 
 plt.ion()
 plt.figure(figsize=figure_size)
-plot_grid(Agg, A, Agg_roots, torch.zeros(A.shape[0]))
+plot_grid(Agg, P_SA, A, Agg_roots, torch.zeros(A.shape[0]))
 plt.title(f'Baseline, conv={loss_fcn(A, ns.lib.sparse.to_torch_sparse(P_SA)):.4f}')
 plt.savefig(f'{fig_directory}/baseline.pdf')
 plt.pause(0.1)
@@ -239,7 +251,7 @@ def display_progress(ga_instance):
     print(f'Loss       = {1.0/weights[1]}')
 
     plt.clf()
-    plot_grid(agg, bf_weights, cluster_centers, node_scores)
+    plot_grid(agg, P, bf_weights, cluster_centers, node_scores)
     plt.title(f'Generation {gen}, {title}, conv={1.0/weights[1]:.4f}')
     plt.pause(0.1)
     plt.savefig(f'{fig_directory}/{gen}_agg.pdf')
@@ -257,7 +269,9 @@ if __name__ == '__main__':
                            initial_population=initial_population,
                            fitness_func=fitness,
                            on_generation=display_progress,
-                           mutation_probability=0.3,
-                           keep_parents=1,
-                           num_parallel_workers=None)
+                           mutation_probability=0.4,
+                           random_mutation_min_val=-3.,
+                           random_mutation_max_val=3.,
+                           keep_parents=1)
+    display_progress(ga_instance)
     ga_instance.run()

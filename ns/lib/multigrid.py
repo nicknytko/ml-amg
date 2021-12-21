@@ -7,10 +7,109 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 import warnings
 
-def jacobi(A, Dinv, b, x, omega=0.666, nu=2):
+def jacobi(A, b, x, Dinv=None, omega=0.666, nu=2):
+    '''
+    Weighted Jacobi iterative solver
+
+    Parameters
+    ----------
+    A : numpy.ndarray, scipy.sparse.spmatrix
+        n x n linear system to solve
+    Dinv : numpy.ndarray, scipy.sparse.spmatrix
+        Inverse to diagonal of A
+    b : numpy.ndarray
+        Length n right hand side to solve for
+    x : numpy.ndarray
+        Length n initial guess for solution
+    omega : float
+        Weighting value for Jacobi sweeps
+    nu : integer
+        Number of sweeps to perform
+
+    Returns
+    -------
+    x : numpy.ndarray
+        Length n approximation to solution
+    '''
+
+    if Dinv is None:
+        Dinv = sp.diags(1.0/A.diagonal())
+
     for i in range(nu):
         x += omega * Dinv @ b - omega * Dinv @ A @ x
     return x
+
+def gauss_seidel(A, b, x, L=None, U=None, nu=2):
+    '''
+    Gauss-Seidel iterative solver
+
+    Parameters
+    ----------
+    A : numpy.ndarray, scipy.sparse.spmatrix
+        n x n linear system to solve
+    L : numpy.ndarray, scipy.sparse.spmatrix
+        Lower triangular half of A
+    U : numpy.ndarray, scipy.sparse.spmatrix
+        Strict upper triangular half of A
+    b : numpy.ndarray
+        Length n right hand side to solve for
+    x : numpy.ndarray
+        Length n initial guess for solution
+    nu : integer
+        Number of sweeps to perform
+
+    Returns
+    -------
+    x : numpy.ndarray
+        Length n approximation to solution
+    '''
+
+    if L is None:
+        L = sp.tril(A)
+    if U is None:
+        U = sp.triu(A, k=1)
+
+    for i in range(nu):
+        x = spla.spsolve_triangular(L, (b - U@x))
+    return x
+
+def sor(A, b, x, L=None, U=None, omega=1., nu=2):
+    '''
+    Successive over-relaxation iterative solver
+
+    Parameters
+    ----------
+    A : numpy.ndarray, scipy.sparse.spmatrix
+        n x n linear system to solve
+    L : numpy.ndarray, scipy.sparse.spmatrix
+        Lower triangular half of A
+    U : numpy.ndarray, scipy.sparse.spmatrix
+        Strict upper triangular half of A
+    b : numpy.ndarray
+        Length n right hand side to solve for
+    x : numpy.ndarray
+        Length n initial guess for solution
+    omega : float
+        Relaxation weight.  Omega > 1 over-relaxes, while omega < 1 under-relaxes.
+    nu : integer
+        Number of sweeps to perform
+
+    Returns
+    -------
+    x : numpy.ndarray
+        Length n approximation to solution
+    '''
+
+    if L is None:
+        L = sp.tril(A)
+    if U is None:
+        U = sp.triu(A, k=1)
+
+    for i in range(nu):
+        x_gs = gauss_Seidel(A, b, x, L, U, nu=1)
+        x = omega * x_gs + (1-omega) * x
+    return x
+
 
 def amg_2_v(A, P, b, x,
             pre_smoothing_steps=1,
@@ -76,7 +175,7 @@ def amg_2_v(A, P, b, x,
         x = x.copy()
 
         # Pre-relaxation
-        x = jacobi(A, Dinv, b, x, omega=jacobi_weight, nu=pre_smoothing_steps)
+        x = jacobi(A, b, x, Dinv, omega=jacobi_weight, nu=pre_smoothing_steps)
         # Coarse-grid correction
         if singular:
             x += P @ spla.lsqr(P.T@A@P, P.T@(b - A@x))[0]
@@ -84,7 +183,7 @@ def amg_2_v(A, P, b, x,
             x += P @ A_H_LU(P.T@(b - A@x))
 
         # Post-relaxation
-        x = jacobi(A, Dinv, b, x, omega=jacobi_weight, nu=post_smoothing_steps)
+        x = jacobi(A, b, x, Dinv, omega=jacobi_weight, nu=post_smoothing_steps)
         # Normalize with zero mean for singular systems w/ constant nullspace
         if singular:
             x -= np.mean(x)

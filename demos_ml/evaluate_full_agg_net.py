@@ -52,16 +52,14 @@ print(ml_aggregator, ml_interpolator)
 if args.ablation:
     suffix = 'full_ablation'
     title = 'ML aggregates and interpolation, separately trained'
-    ml_aggregator = True
-    ml_interpolator = True
 elif ml_aggregator and ml_interpolator:
     suffix = 'full'
     title = 'ML aggregates and interpolation'
 elif ml_aggregator:
-    suffix = 'agg'
+    suffix = 'full'
     title = 'ML Aggregates, SA'
 else:
-    suffix = 'interp'
+    suffix = 'full'
     title = 'Lloyd, ML interpolation'
 
 fig_directory = f'{args.system}_figures_{suffix}'
@@ -196,7 +194,7 @@ def loss_fcn(A, P_T):
     ret = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega)
     return ret[1]
 
-def plot_grid(agg, bf_weights, cluster_centers, node_scores):
+def plot_grid(agg, P, bf_weights, cluster_centers, node_scores):
     graph = grid.networkx
     positions = {}
     for node in graph.nodes:
@@ -210,15 +208,19 @@ def plot_grid(agg, bf_weights, cluster_centers, node_scores):
         node_scores = node_scores.numpy()
     node_scores = np.log10(node_scores + 1)
 
-    grid.plot_agg(agg)
+    if not isinstance(P, sp.spmatrix):
+        P = ns.lib.sparse_tensor.to_scipy(P)
+
+    grid.plot_agg(agg, alpha=0.1, edgecolor='0.2')
+    grid.plot_spider_agg(agg, P)
     nx.drawing.nx_pylab.draw_networkx(graph, ax=plt.gca(), pos=positions, arrows=False, with_labels=False, node_size=100, edge_color=edge_values, node_color=node_scores)
     plt.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'r*', markersize=6)
     plt.gca().set_aspect('equal')
 
 plt.figure(figsize=figure_size)
-plot_grid(Agg, A, Agg_roots, torch.zeros(A.shape[0]))
-plt.title(f'Baseline, conv={loss_fcn(A, ns.lib.sparse.to_torch_sparse(P_SA)):.4f}')
-plt.show()
+# plot_grid(Agg, P, A, Agg_roots, torch.zeros(A.shape[0]))
+# plt.title(f'Baseline, conv={loss_fcn(A, ns.lib.sparse.to_torch_sparse(P_SA)):.4f}')
+# plt.show()
 
 if args.ablation:
     model_pnet = ns.model.agg_interp.FullAggNet(64, use_aggnet=False, use_pnet=True)
@@ -234,13 +236,15 @@ if args.ablation:
     model.AggNet.load_state_dict(model_agg.AggNet.state_dict())
     model.eval()
 else:
-    model = ns.model.agg_interp.FullAggNet(64, use_aggnet=ml_aggregator, use_pnet=ml_interpolator)
+    # model = ns.model.agg_interp.FullAggNet(64, use_aggnet=ml_aggregator, use_pnet=ml_interpolator)
+    model = ns.model.agg_interp.FullAggNet(64)
     model.load_state_dict(torch.load(f'models/{args.system}_{suffix}'))
     model.eval()
 
 agg_T, P, bf_weights, cluster_centers, node_scores = compute_agg_and_p(model)
 plt.figure(figsize=figure_size)
-plot_grid(ns.lib.sparse_tensor.to_scipy(agg_T), bf_weights, cluster_centers, node_scores)
+plot_grid(ns.lib.sparse_tensor.to_scipy(agg_T), P, bf_weights, cluster_centers, node_scores)
 conv = loss_fcn(A, P)
 plt.title(f'{title}, conv={conv:.4f}')
+print(conv)
 plt.show()

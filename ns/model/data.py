@@ -2,7 +2,9 @@ import networkx as nx
 import torch
 import torch_geometric as tg
 import numpy as np
+import numpy.linalg as la
 import scipy.sparse as sp
+import scipy.sparse.linalg as spla
 import pyamg
 import matplotlib.pyplot as plt
 import matplotlib
@@ -12,6 +14,7 @@ import pyamg.gallery.fem
 
 import shapely.geometry as sg
 from shapely.ops import cascaded_union
+import ns.lib.sparse
 
 def graph_from_matrix(A, agg_op):
     n = A.shape[0]
@@ -79,7 +82,45 @@ class Grid():
 
         nx.drawing.nx_pylab.draw_networkx(graph, ax=ax, pos=positions, arrows=False, with_labels=False, node_size=100)
 
-    def plot_agg(self, AggOp, ax=None, color=None, edgecolor='0.5', lw=1):
+    def plot_spider_agg(self, AggOp, P, ax=None, lw=4):
+        '''
+        Creates a spider plot, drawing lines from geometric aggregate centers to each node in an aggregate.
+        It's recommended to combine this with plot_agg to get the aggregate borders as well.
+
+        Parameters
+        ----------
+        AggOp : CSR sparse matrix
+          n x nagg encoding of the aggregates AggOp[i,j] == 1 means node i is in aggregate j
+        P : CSR sparse matrix
+          n x nagg interpolation operator that is used for the edge opacities.
+        ax : axis
+          matplotlib axis
+        lw : float
+          line width
+        '''
+
+        if ax is None:
+            ax = plt.gca()
+
+        x_centers = ns.lib.sparse.col_normalize_csr(P, ord=1).T @ self.x
+        cmap = matplotlib.cm.get_cmap('tab10')
+
+        P = np.abs(P)
+        for i in range(P.shape[1]):
+            agg = P[:,i]
+            P_max = spla.norm(agg, np.inf) # compute per-agg max interpolation weight, because aggs may have different scale
+            nonzeros = agg.nonzero()[0]
+            xc = x_centers[i]
+            for j in nonzeros:
+                Pv = agg[j, 0]
+                xv = self.x[j]
+                line = matplotlib.lines.Line2D([xc[0], xv[0]], [xc[1], xv[1]], color=cmap(i%cmap.N), alpha=Pv/P_max, linewidth=lw)
+                ax.add_line(line)
+
+        ax.plot(x_centers[:,0], x_centers[:,1], 'r*', markersize=6)
+
+
+    def plot_agg(self, AggOp, ax=None, color=None, edgecolor='k', lw=1, alpha=0.7):
         '''
         Aggregate visualization borrowed/stolen from PyAMG
         (https://github.com/pyamg/pyamg/blob/main/Docs/logo/pyamg_logo.py)
@@ -130,12 +171,13 @@ class Grid():
                         todraw.append(newobj)
 
             todraw = cascaded_union(todraw)                    # union all objects in the aggregate
-            todraw = todraw.buffer(0.07)                       # expand to smooth
-            todraw = todraw.buffer(-0.05)                      # then contract
+            todraw = todraw.buffer(0.04)                       # expand to smooth
+            todraw = todraw.buffer(-0.02)                      # then contract
 
             try:
                 xs, ys = todraw.exterior.xy                    # get all of the exterior points
-                ax.fill(xs, ys, clip_on=False, alpha=0.7)      # fill with a color
+                ax.fill(xs, ys, clip_on=False, alpha=alpha)
+                ax.plot(xs, ys, color=edgecolor)
             except:
                 pass                                           # don't plot singletons
 
@@ -235,7 +277,7 @@ class Grid():
             np.logical_or(v[:, 1] == 0., v[:, 1] == 1.)
         )
         interior_mask = np.logical_not(boundary_mask)
-        R = (sp.eye(v.shape[0]).tocsc())[:, interior_mask]
+        R = (sp.eye(v.shape[0]).tocsr())[interior_mask]
 
         # Update coordinates to lie within domain bounds
         v[:,0] = (v[:,0] + xdim[0]) * (xdim[1] - xdim[0])
@@ -245,8 +287,10 @@ class Grid():
         mesh = pyamg.gallery.fem.mesh(v, e, degree=1)
         A, _ = pyamg.gallery.fem.gradgradform(mesh, kappa=kappa, degree=1)
         A = A.tocsr()
+        A_d = R@A@R.T
+        A_d.eliminate_zeros()
 
-        return Grid(R.T@A@R, R.T@v)
+        return Grid(A_d, R@v)
 
     def structured_2d_poisson_neumann(n_pts_x, n_pts_y,
                                       xdim=(0,1), ydim=(0,1),
