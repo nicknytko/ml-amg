@@ -6,6 +6,7 @@ import numpy as np
 import scipy.sparse as sp
 import ns.lib.sparse as sparse
 import ns.model.data
+import ns.lib.graph
 
 class TensorLambda(nn.Module):
     '''

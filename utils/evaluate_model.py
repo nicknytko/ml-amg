@@ -1,7 +1,4 @@
 import torch
-import torch.linalg as tla
-import torch.nn as nn
-import torch_geometric.nn as tgnn
 import numpy as np
 import numpy.linalg as la
 import scipy.sparse as sp
@@ -9,6 +6,7 @@ import scipy.sparse.linalg as spla
 import sys
 import os
 import pyamg
+import matplotlib
 import matplotlib.pyplot as plt
 import pygad
 import pygad.torchga
@@ -17,12 +15,10 @@ import networkx as nx
 
 sys.path.append('../')
 import ns.model.agg_interp
-import ns.model.loss
 import ns.model.data
 import ns.lib.sparse
 import ns.lib.sparse_tensor
 import ns.lib.multigrid
-import ns.lib.graph
 
 def parse_bool_str(v):
     v = v.lower()
@@ -186,5 +182,5 @@ plt.figure(figsize=figure_size)
 plot_grid(ns.lib.sparse_tensor.to_scipy(agg_T), P, bf_weights, cluster_centers, node_scores)
 conv = loss_fcn(A, P)
 plt.title(f'ML AMG, conv={conv:.4f}')
-print(conv)
 plt.show()
+print('Convergence', conv)
