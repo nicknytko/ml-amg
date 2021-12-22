@@ -2,7 +2,6 @@ import numpy as np
 import numpy.linalg as la
 import pyamg
 import scipy
-import scipy.linalg as sla
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 import warnings
@@ -109,6 +108,15 @@ def sor(A, b, x, L=None, U=None, omega=1., nu=2):
         x_gs = gauss_Seidel(A, b, x, L, U, nu=1)
         x = omega * x_gs + (1-omega) * x
     return x
+
+
+def smoothed_aggregation_jacobi(A, Agg):
+    n = A.shape[0]
+    Dinv = sp.diags([1.0 / A.diagonal()], [0])
+    omega = (4. / 3.) / np.abs(spla.eigs(Dinv @ A, k=1, return_eigenvectors=False)).item()
+    smoother = (sp.eye(n) - omega*Dinv@A)
+    P = smoother @ Agg
+    return P
 
 
 def amg_2_v(A, P, b, x,

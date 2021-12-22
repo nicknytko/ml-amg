@@ -5,9 +5,11 @@ import numpy as np
 import numpy.linalg as la
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
+import scipy.spatial as spat
 import pyamg
 import matplotlib.pyplot as plt
 import matplotlib
+import os
 
 import pyamg.gallery.mesh
 import pyamg.gallery.fem
@@ -15,6 +17,7 @@ import pyamg.gallery.fem
 import shapely.geometry as sg
 from shapely.ops import cascaded_union
 import ns.lib.sparse
+import ns.lib.helpers
 
 def graph_from_matrix(A, agg_op):
     n = A.shape[0]
@@ -73,6 +76,7 @@ class Grid():
         '''
 
         graph = self.networkx
+        graph.remove_edges_from(list(nx.selfloop_edges(graph)))
         if self.x is None:
             positions = None
         else:
@@ -181,6 +185,31 @@ class Grid():
             except:
                 pass                                           # don't plot singletons
 
+    def save(self, fname):
+        if not '.grid' in fname:
+            fname = fname + '.grid'
+
+        ns.lib.helpers.pickle_save_bz2(fname, {
+            'A': self.A,
+            'x': self.x
+        })
+
+    def load(fname):
+        if not '.grid' in fname:
+            fname = fname + '.grid'
+
+        loaded = ns.lib.helpers.pickle_load_bz2(fname)
+        return Grid(loaded['A'], loaded['x'])
+
+    def load_dir(directory):
+        grids = []
+        for f in os.listdir(directory):
+            if not '.grid' in f.lower():
+                continue
+            grids.append(Grid.load(os.path.join(directory, f)))
+        return grids
+
+
     def structured_1d_poisson_dirichlet(n, xdim=(0,1)):
         '''
         Creates a 1D poisson system on a structured grid, discretized using finite differences.
@@ -234,6 +263,32 @@ class Grid():
         A = A.tocsr() * (h**-2.)
 
         return Grid(A, np.column_stack((x, np.zeros_like(x))))
+
+
+    def unstructured_pts_2d_poisson_dirichlet(pts, epsilon=1.0, theta=0.0):
+        # Set up diffusion coefficient
+        def kappa(x, y):
+            c, s = np.cos(theta), np.sin(theta)
+            Q = np.array([
+                [c, -s],
+                [s, c]
+            ])
+            A = np.diag([1., epsilon])
+            return Q@A@Q.T
+
+        boundary_idx = spat.ConvexHull(pts).vertices
+        interior_mask = np.ones(pts.shape[0], dtype=bool)
+        interior_mask[boundary_idx] = False
+        R = (sp.eye(pts.shape[0]).tocsr())[interior_mask]
+
+        mesh = pyamg.gallery.fem.mesh(pts, spat.Delaunay(pts).simplices, degree=1)
+        A, _ = pyamg.gallery.fem.gradgradform(mesh, kappa=kappa, degree=1)
+        A = A.tocsr()
+        A_d = R@A@R.T
+        A_d.eliminate_zeros()
+
+        return Grid(A_d, R@pts)
+
 
     def structured_2d_poisson_dirichlet(n_pts_x, n_pts_y,
                                         xdim=(0,1), ydim=(0,1),
