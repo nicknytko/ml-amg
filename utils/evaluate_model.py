@@ -27,11 +27,12 @@ def parse_bool_str(v):
     else:
         return False
 
-parser = argparse.ArgumentParser(description='Demo of the aggregate-picking network')
+parser = argparse.ArgumentParser(description='Demo of the trained ML-AMG network on a single example')
 parser.add_argument('system', type=str, help='Problem selection to run demo on')
 parser.add_argument('--model', type=str, help='Model file to evaluate')
 parser.add_argument('--n', type=int, default=None, help='Size of the system.  In 2d, this determines the legnth in one dimension')
 parser.add_argument('--alpha', type=float, default=None, help='Coarsening ratio for aggregation')
+parser.add_argument('--spiderplot', type=parse_bool_str, default=True, help='Enable spider plot')
 args = parser.parse_args()
 
 N = args.n
@@ -164,7 +165,8 @@ def plot_grid(agg, P, bf_weights, cluster_centers, node_scores):
         P = ns.lib.sparse_tensor.to_scipy(P)
 
     grid.plot_agg(agg, alpha=0.1, edgecolor='0.2')
-    grid.plot_spider_agg(agg, P)
+    if args.spiderplot:
+        grid.plot_spider_agg(agg, P)
     nx.drawing.nx_pylab.draw_networkx(graph, ax=plt.gca(), pos=positions, arrows=False, with_labels=False, node_size=50, edge_color=edge_values, node_color=node_scores)
     plt.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'r*', markersize=6)
     plt.gca().set_aspect('equal')
