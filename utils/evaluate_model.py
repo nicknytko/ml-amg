@@ -169,7 +169,7 @@ def plot_grid(agg, P, bf_weights, cluster_centers, node_scores):
 
     grid.plot_agg(agg, alpha=0.1, edgecolor='0.2')
     grid.plot_spider_agg(agg, P)
-    nx.drawing.nx_pylab.draw_networkx(graph, ax=plt.gca(), pos=positions, arrows=False, with_labels=False, node_size=100, edge_color=edge_values, node_color=node_scores)
+    nx.drawing.nx_pylab.draw_networkx(graph, ax=plt.gca(), pos=positions, arrows=False, with_labels=False, node_size=50, edge_color=edge_values, node_color=node_scores)
     plt.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'r*', markersize=6)
     plt.gca().set_aspect('equal')
 

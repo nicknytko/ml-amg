@@ -114,8 +114,9 @@ except:
 if __name__ == '__main__':
     model = ns.model.agg_interp.FullAggNet(64, use_aggnet=True, use_pnet=True)
     initial_population = pygad.torchga.TorchGA(model=model, num_solutions=args.initial_population_size).population_weights
+    print(initial_population)
     ga_instance = pygad.GA(num_generations=args.max_generations,
-                           num_parents_mating=5,
+                           num_parents_mating=15,
                            initial_population=initial_population,
                            fitness_func=fitness,
                            on_generation=display_progress,
