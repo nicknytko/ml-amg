@@ -159,16 +159,22 @@ class ParallelGA:
 
     def iteration(self):
         self.num_generation += 1
-        self.compute_fitness()
+        best, fitness, _ = self.best_solution()
         self.selection_method()
         self.mutation()
         self.compute_fitness()
+
+        # replace worst with previous best, so we never totally remove the best solution we have
+        # this gives us a monotonically increasing fitness
+        worst = np.argmin(self.population_fitness)
+        self.population[worst] = best
+        self.population_fitness[worst] = fitness
 
 
     def best_solution(self):
         self.compute_fitness()
         idx = np.argmax(self.population_fitness)
-        return self.population[idx], self.population_fitness[idx], idx
+        return self.population[idx].copy(), self.population_fitness[idx], idx
 
 
     def start_workers(self):

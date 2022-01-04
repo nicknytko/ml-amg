@@ -92,7 +92,7 @@ class WorkerQueue:
             worker.finish()
 
 
-def worker_fitness(pipe, cmd):
+def worker_fitness(random, pipe, cmd):
     population = cmd['population']
     indices = cmd['indices']
     fitness_func = cmd['fitness_func']
@@ -106,7 +106,7 @@ def worker_fitness(pipe, cmd):
                                    fitness=computed_fitness))
 
 
-def worker_crossover(pipe, cmd):
+def worker_crossover(random, pipe, cmd):
     population = cmd['population']
     fitness = cmd['fitness']
 
@@ -134,12 +134,12 @@ def worker_crossover(pipe, cmd):
 
     for i in range(0, n_pairs, 2):
         # draw two parents
-        parent_one_idx, parent_two_idx = np.random.choice(population_to_use, size=2, replace=False, p=probability)
+        parent_one_idx, parent_two_idx = random.choice(population_to_use, size=2, replace=False, p=probability)
 
         # now, with probability p do some sort of crossover, otherwise use the parents directly
-        p = np.random.rand()
+        p = random.rand()
         if p <= crossover_probability:
-            crossover_pt = np.random.randint(0, population.shape[1])
+            crossover_pt = random.randint(0, population.shape[1])
 
             # single point crossover
             pairs[i, :crossover_pt] = population[parent_one_idx, :crossover_pt]
@@ -162,7 +162,7 @@ def worker_crossover(pipe, cmd):
                                    pairs_fitness=pairs_fitness))
 
 
-def worker_mutation(pipe, cmd):
+def worker_mutation(random, pipe, cmd):
     population = cmd['population']
     indices = cmd['indices']
     mutated = np.zeros(population.shape[0], bool)
@@ -171,9 +171,9 @@ def worker_mutation(pipe, cmd):
     C = population.shape[1]
 
     for i in range(population.shape[0]):
-        p = np.random.rand()
+        p = random.rand()
         if p <= mutation_probability:
-            population[i] += (np.random.rand(C) * (perturb_max - perturb_min)) + perturb_min
+            population[i] += (random.rand(C) * (perturb_max - perturb_min)) + perturb_min
             mutated[i] = True
 
     # Only send back parts of the population we have mutated
@@ -188,7 +188,7 @@ def worker_process(pipe):
     # There may be some startup cost involved in creating the process
     # (loading datasets, etc), so send a messgae when we've started
     pipe.send(WorkerCommand.create(WorkerCommand.STARTED))
-    np.random.seed(os.getpid())
+    random = np.random.RandomState(seed=os.getpid())
 
     while True:
         # Poll endlessly until we are told to exit
@@ -201,10 +201,10 @@ def worker_process(pipe):
         elif cmd_enum == WorkerCommand.NOOP:
             pipe.send(WorkerCommand.create(WorkerCommand.NOOP))
         elif cmd_enum == WorkerCommand.FITNESS:
-            worker_fitness(pipe, worker_cmd)
+            worker_fitness(random, pipe, worker_cmd)
         elif cmd_enum == WorkerCommand.CROSSOVER:
-            worker_crossover(pipe, worker_cmd)
+            worker_crossover(random, pipe, worker_cmd)
         elif cmd_enum == WorkerCommand.MUTATION:
-            worker_mutation(pipe, worker_cmd)
+            worker_mutation(random, pipe, worker_cmd)
         else:
             raise RuntimeError(f'Unknown command {cmd_enum}')

@@ -118,6 +118,8 @@ if __name__ == '__main__':
                                          mutation_probability=0.4,
                                          mutation_min_perturb=-3.,
                                          mutation_max_perturb=3.,
+                                         steady_state_top_use=2./3.,
+                                         steady_state_bottom_discard=1./4.,
                                          num_workers=args.workers)
     ga_instance.start_workers()
     display_progress(ga_instance)
