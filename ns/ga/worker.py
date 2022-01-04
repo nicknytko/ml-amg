@@ -2,6 +2,7 @@ import os
 import enum
 import numpy as np
 import numpy.linalg as la
+import multiprocessing
 
 
 class WorkerCommand(enum.Enum):
@@ -108,20 +109,32 @@ def worker_fitness(pipe, cmd):
 def worker_crossover(pipe, cmd):
     population = cmd['population']
     fitness = cmd['fitness']
-    fitness = fitness / la.norm(fitness, 1)
+
+    # Probability for picking individuals
+    if cmd['selection_uniform_probability']:
+        probability = np.ones(len(fitness)) / len(fitness)
+    else:
+        probability = fitness / la.norm(fitness, 1)
+
+    # Crossover probability
     crossover_probability = cmd['crossover_probability']
     N = cmd['num_to_create']
     n_pairs = N // 2
+
+    # How many of the top population to use
+    population_to_use = np.argsort(fitness)[::-1]
+    if cmd['top_population_to_use'] != -1:
+        population_to_use = population_to_use[:cmd['top_population_to_use']]
+        probability = probability[population_to_use]
+        probability /= la.norm(probability, 1)
 
     pairs = np.zeros((n_pairs * 2, population.shape[1]))
     pairs_computed_fitness = np.zeros(n_pairs * 2, dtype=bool)
     pairs_fitness = np.zeros(n_pairs * 2)
 
-    np.random.seed(os.getpid())
-
     for i in range(0, n_pairs, 2):
         # draw two parents
-        parent_one_idx, parent_two_idx = np.random.choice(np.arange(population.shape[0]), size=2, replace=False, p=fitness)
+        parent_one_idx, parent_two_idx = np.random.choice(population_to_use, size=2, replace=False, p=probability)
 
         # now, with probability p do some sort of crossover, otherwise use the parents directly
         p = np.random.rand()
@@ -157,8 +170,6 @@ def worker_mutation(pipe, cmd):
     perturb_min, perturb_max = cmd['mutation_perturb']
     C = population.shape[1]
 
-    np.random.seed(os.getpid())
-
     for i in range(population.shape[0]):
         p = np.random.rand()
         if p <= mutation_probability:
@@ -177,6 +188,7 @@ def worker_process(pipe):
     # There may be some startup cost involved in creating the process
     # (loading datasets, etc), so send a messgae when we've started
     pipe.send(WorkerCommand.create(WorkerCommand.STARTED))
+    np.random.seed(os.getpid())
 
     while True:
         # Poll endlessly until we are told to exit

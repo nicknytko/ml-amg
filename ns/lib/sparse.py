@@ -21,4 +21,5 @@ def to_torch_sparse(A):
         torch.Tensor(A.data),
         A.shape
     )
-    return A_T.coalesce()
+    A_T = A_T.coalesce()
+    return A_T
