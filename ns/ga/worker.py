@@ -20,14 +20,29 @@ class WorkerCommand(enum.Enum):
 
 
 class Worker:
+    '''
+    Representation of a child worker process.
+    Has routines for sending and receiving data to the worker.
+    '''
+
     def __init__(self, ctx):
+        '''
+        Creates and starts a worker process.  Note that the process is transparently
+        started in the constructor, though start() should be called before anything
+        else is run.
+        '''
         self.parent_pipe, self.child_pipe = multiprocessing.Pipe()
-        self.process = multiprocessing.Process(target=worker_process, args=(self.child_pipe,))
+        self.process = ctx.Process(target=worker_process, args=(self.child_pipe,))
         self.process.start()
         self.started = False
 
 
     def start(self):
+        '''
+        Waits for the worker process to start and get to a ready state.
+        This should be called before any data is sent/received to the worker.
+        '''
+
         if self.started:
             return
 
@@ -38,19 +53,32 @@ class Worker:
 
 
     def finish(self):
+        '''
+        Closes the worker process
+        '''
         self.send_command(WorkerCommand.create(WorkerCommand.EXIT))
 
 
     def send_command(self, cmd):
+        '''
+        Send a WorkerCommand to the worker process
+        '''
         self.parent_pipe.send(cmd)
 
 
     def receive(self):
+        '''
+        Receive data from the worker process.  This will block until something is received.
+        '''
         return self.parent_pipe.recv()
 
 
 class WorkerQueue:
     def __init__(self, num_workers):
+        '''
+        Creates and transparently starts a queue of workers.
+        '''
+
         self.mp_ctx = multiprocessing.get_context('spawn')
         self.num_workers = num_workers
         self.workers = []
@@ -68,6 +96,10 @@ class WorkerQueue:
 
 
     def start(self):
+        '''
+        Wait for all workers to start.  This should be called before
+        any data is sent or received to a worker.
+        '''
         if self.started:
             return
 
@@ -78,6 +110,15 @@ class WorkerQueue:
 
 
     def receive_all(self):
+        '''
+        Gathers data from all worker processes.
+
+        Returns
+        -------
+        data - python list
+          List of data, such that data[i] is what was received from worker i.
+        '''
+
         data = []
         for worker in self.workers:
             data.append(worker.receive())
@@ -85,6 +126,10 @@ class WorkerQueue:
 
 
     def finish(self):
+        '''
+        Closes all workers in the queue, and frees associated resources.
+        '''
+
         if not self.started:
             raise RuntimeError('Cannot close WorkerQueue: not started')
 
@@ -185,6 +230,11 @@ def worker_mutation(random, pipe, cmd):
 
 
 def worker_process(pipe):
+    '''
+    Main entrypoint for the worker process.  This will poll for commands
+    to run from the main process, until it is told to terminate.
+    '''
+
     # There may be some startup cost involved in creating the process
     # (loading datasets, etc), so send a messgae when we've started
     pipe.send(WorkerCommand.create(WorkerCommand.STARTED))

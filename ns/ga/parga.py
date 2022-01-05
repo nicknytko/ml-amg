@@ -4,7 +4,39 @@ from datetime import datetime
 
 
 class ParallelGA:
+    '''
+    Parallel implementation of Genetic Algorithm, used to train
+    neural networks without needing any gradient information
+    '''
+
     def __init__(self, **kwargs):
+        '''
+        Initializes the GA method
+
+        Keyword Arguments
+        ----------
+        initial_population : np.ndarray
+          population x chromosomes length array, representing the initial population
+        fitness_func : callable, (individual, idx) -> fitness
+          Function to be called to evaluate network fitness.  Must be pickle-able.
+        crossover_probability : float (default 0.5)
+          Probability in [0, 1] that offspring will be a random crossover between two parents
+        mutation_probability : float (default 0.3)
+          Probability in [0, 1] that an individual will be randomly mutated
+        mutation_min_perturb : float (default -1)
+          Minimum value to perturb a chromosome when mutating
+        mutation_max_perturb : float (default 1)
+          Maximum value to perturb a chrosome when mutating
+        steady_state_top_use : float (default 1/3)
+          Percent of the population to use for breeding when steady state selection is used
+        steady_state_bottom_discard : float (default 1/3)
+          Percent of the population to discard when steady state selection is used
+        selection : str {steady_state, roulette}
+          Selection method to use
+        num_workers : int (default 2)
+          Number of worker processes to use
+        '''
+
         self.population = np.copy(kwargs.get('initial_population'))
         self.population_size = self.population.shape[0]
         self.population_fitness = np.zeros(self.population_size)
@@ -158,6 +190,10 @@ class ParallelGA:
 
 
     def iteration(self):
+        '''
+        Performs one iteration of the GA
+        '''
+
         self.num_generation += 1
         best, fitness, _ = self.best_solution()
         self.selection_method()
@@ -172,14 +208,28 @@ class ParallelGA:
 
 
     def best_solution(self):
+        '''
+        Return the best solution that has been encountered so far
+
+        Returns
+        -------
+        (individual, fitness, index)
+        '''
+
         self.compute_fitness()
         idx = np.argmax(self.population_fitness)
         return self.population[idx].copy(), self.population_fitness[idx], idx
 
 
     def start_workers(self):
+        '''
+        Launches all worker processes.  Should be called before iteration()
+        '''
         self.workers.start()
 
 
     def finish_workers(self):
+        '''
+        Shuts down all worker processes.  Should be called after finishing training.
+        '''
         self.workers.finish()
