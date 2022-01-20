@@ -134,6 +134,22 @@ A basic overview of the training algorithm is that the method is seeded with som
   \centering
   \begin{subfigure}[t]{0.49\textwidth}
     \centering
+    \includegraphics[width=\textwidth]{rel_perf_train.pdf}
+    \caption{Relative training performance}
+  \end{subfigure}
+  \begin{subfigure}[t]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{rel_perf_test.pdf}
+    \caption{Relative testing performance}
+  \end{subfigure}
+  \caption{Relative performance of the ML to the Lloyd method, plotted against problem size.  Relative performance is obtained by dividing the ML convergence by the Lloyd convergence for each problem.}
+  \label{fig:rel_conv}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \begin{subfigure}[t]{0.49\textwidth}
+    \centering
     \includegraphics[width=\textwidth]{hist_train.pdf}
     \caption{Frequency of problem sizes in training set}
   \end{subfigure}
@@ -204,7 +220,7 @@ A basic overview of the training algorithm is that the method is seeded with som
     \includegraphics[width=\textwidth]{grid_circle_ml.pdf}
     \caption{ML}
   \end{subfigure}
-  \caption{Aggregate and interpolation data for a circular unstructured mesh.}
+  \caption{Aggregate and interpolation data for a circular unstructured mesh.  This particular mesh has 173 DoF.}
   \label{fig:gridcircle}
 \end{figure}
 
