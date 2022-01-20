@@ -15,7 +15,7 @@ import pyamg.gallery.mesh
 import pyamg.gallery.fem
 
 import shapely.geometry as sg
-from shapely.ops import cascaded_union
+from shapely.ops import unary_union
 import ns.lib.sparse
 import ns.lib.helpers
 
@@ -34,7 +34,7 @@ def graph_from_matrix(A, agg_op):
 
     nx.set_edge_attributes(G, cluster_adj, 'cluster_adj')
     nx_data = tg.utils.from_networkx(G, None, ['weight', 'cluster_adj'])
-    return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=abs(nx_data.edge_attr.float()))
+    return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=nx_data.edge_attr.float())
 
 def graph_from_matrix_basic(A):
     n = A.shape[0]
@@ -174,7 +174,7 @@ class Grid():
                         newobj = sg.LineString(coords)         # add a line object to the list
                         todraw.append(newobj)
 
-            todraw = cascaded_union(todraw)                    # union all objects in the aggregate
+            todraw = unary_union(todraw)                    # union all objects in the aggregate
             todraw = todraw.buffer(0.04)                       # expand to smooth
             todraw = todraw.buffer(-0.02)                      # then contract
 
@@ -265,7 +265,22 @@ class Grid():
         return Grid(A, np.column_stack((x, np.zeros_like(x))))
 
 
-    def unstructured_pts_2d_poisson_dirichlet(pts, epsilon=1.0, theta=0.0):
+    def meshio_2d_poisson_dirichlet(mesh, epsilon=1.0, theta=0.0):
+        '''
+        Creates a 2D poisson system on an unstructured mesh, defined by a meshio object
+
+        Parameters
+        ----------
+        mesh : meshio.Mesh
+          Mesh that defines the PDE domain.  Should have the following cells:
+          - 'line' (for boundary data)
+          - 'triangle' (for element data)
+        epsilon : float
+          Scaling of y-dimension for anisotropic problems
+        theta : float
+          Rotation of diffusion for anisotropic problems
+        '''
+
         # Set up diffusion coefficient
         def kappa(x, y):
             c, s = np.cos(theta), np.sin(theta)
@@ -276,18 +291,24 @@ class Grid():
             A = np.diag([1., epsilon])
             return Q@A@Q.T
 
-        boundary_idx = spat.ConvexHull(pts).vertices
+        pts = mesh.points
+        boundary_indices = set()
+        for (a, b) in mesh.cells_dict['line']:
+            boundary_indices.add(a)
+            boundary_indices.add(b)
+        boundary_indices = list(boundary_indices)
+
         interior_mask = np.ones(pts.shape[0], dtype=bool)
-        interior_mask[boundary_idx] = False
+        interior_mask[boundary_indices] = False
         R = (sp.eye(pts.shape[0]).tocsr())[interior_mask]
 
-        mesh = pyamg.gallery.fem.mesh(pts, spat.Delaunay(pts).simplices, degree=1)
+        mesh = pyamg.gallery.fem.mesh(pts[:, :2], mesh.cells_dict['triangle'].astype(np.int64), degree=1)
         A, _ = pyamg.gallery.fem.gradgradform(mesh, kappa=kappa, degree=1)
         A = A.tocsr()
         A_d = R@A@R.T
         A_d.eliminate_zeros()
 
-        return Grid(A_d, R@pts)
+        return Grid(A_d, (R@pts)[:, :2])
 
 
     def structured_2d_poisson_dirichlet(n_pts_x, n_pts_y,
@@ -307,6 +328,10 @@ class Grid():
           Bounds for domain in x dimension.  Represents smallest and largest x values.
         ydim : tuple (float, float)
           Bounds for domain in y dimension.  Represents smallest and largest y values.
+        epsilon : float
+          Scaling of y-dimension for anisotropic problems
+        theta : float
+          Rotation of diffusion for anisotropic problems
 
         Returns
         -------

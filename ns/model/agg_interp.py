@@ -40,6 +40,40 @@ class smallEdgeModel(nn.Module):
         out = self.edge_mlp(out)
         return out
 
+class EdgeModel(nn.Module):
+    def __init__(self):
+        super(EdgeModel, self).__init__()
+        self.feature_mlp = nn.Sequential(nn.Linear(3, 3), nn.ReLU(), nn.Linear(3, 3), nn.ReLU())
+        self.edge_mlp = nn.Sequential(nn.Linear(9, 3), nn.ReLU(), nn.Linear(3, 1), nn.ReLU())
+
+    def forward(self, x, edge_index, edge_weight):
+        num_edges = len(edge_weight)
+
+        from_list = [[]] * num_edges
+        to_list = [[]] * num_edges
+        edge_cons = torch.zeros((num_edges, 3))
+
+        for i in range(num_edges):
+            row = edge_index[0, i]
+            col = edge_index[1, i]
+
+            from_list[col].append(i)
+            to_list[row].append(i)
+
+        edge_cons = torch.column_stack((edge_weight, x[edge_index[1]], x[edge_index[0]]))
+        edge_cons = self.feature_mlp(edge_cons)
+
+        new_edge_weight = torch.zeros((num_edges, 9))
+        for i in range(num_edges):
+            fr = torch.mean(edge_cons[from_list[i]], dim=0)
+            to = torch.mean(edge_cons[to_list[i]], dim=0)
+            cur = edge_cons[i]
+
+            new_edge_weight[i] = torch.cat((fr, to, cur))
+
+        return self.edge_mlp(new_edge_weight)
+
+
 class MPNN(nn.Module):
     def __init__(self, dim, node_activation=nn.ReLU(), edge_activation=nn.ReLU(), num_internal_conv=4):
         super(MPNN, self).__init__()
@@ -96,7 +130,7 @@ class MPNN(nn.Module):
         col = edge_index[1]
 
         # conv 1
-        x = nnF.relu(self.node_conv_in(self.normalize_in(x), edge_index, edge_attr)) + x
+        x = nnF.relu(self.node_conv_in(self.normalize_in(x), edge_index, abs(edge_attr))) + x
         edge_attr = nnF.relu(self.edge_conv_in(x[row], x[col], edge_attr.float())) + edge_attr
 
         for i in range(self.num_internal_conv):
@@ -145,6 +179,8 @@ class AggNet(nn.Module):
         self.norm4 = tg.nn.norm.InstanceNorm(64); self.nc4 = tg.nn.ChebConv(64, 1, K=3)
         self.ec1 = smallEdgeModel(1*2+1, 2, 1)
         self.ec2 = smallEdgeModel(1*2+1, 2, 1)
+        # self.ec1 = EdgeModel()
+        # self.ec2 = EdgeModel()
 
         self.lin1 = nn.Linear(85, 40)
         self.lin2 = nn.Linear(40, 16)
@@ -160,10 +196,10 @@ class AggNet(nn.Module):
         row = edge_index[0]
         col = edge_index[1]
 
-        x1 = nnF.relu(self.nc1(self.norm1(x), edge_index, edge_attr))
-        x2 = nnF.relu(self.nc2(self.norm2(x1), edge_index, edge_attr))
-        x3 = nnF.relu(self.nc3(self.norm3(x2), edge_index, edge_attr))
-        x4 = nnF.relu(self.nc4(self.norm4(x3), edge_index, edge_attr))
+        x1 = nnF.relu(self.nc1(self.norm1(x), edge_index, abs(edge_attr)))
+        x2 = nnF.relu(self.nc2(self.norm2(x1), edge_index, abs(edge_attr)))
+        x3 = nnF.relu(self.nc3(self.norm3(x2), edge_index, abs(edge_attr)))
+        x4 = nnF.relu(self.nc4(self.norm4(x3), edge_index, abs(edge_attr)))
 
         x_stack = torch.column_stack((x1, x2, x3, x4))
         x = nnF.relu(self.lin1(x_stack))
@@ -172,6 +208,8 @@ class AggNet(nn.Module):
 
         edge_attr = nnF.relu(self.ec1(x[row], x[col], edge_attr.float()))
         edge_attr = self.edge_activation(self.ec2(x[row], x[col], edge_attr.float()))
+        # edge_attr = self.ec1(x, edge_index, edge_attr)
+        # edge_attr = self.ec2(x, edge_index, edge_attr)
 
         return x, edge_attr
 

@@ -17,12 +17,10 @@ import time
 
 sys.path.append('../')
 import ns.model.agg_interp
-import ns.model.loss
 import ns.model.data
 import ns.lib.sparse
 import ns.lib.sparse_tensor
 import ns.lib.multigrid
-import ns.lib.graph
 
 def parse_bool_str(v):
     v = v.lower()
@@ -44,6 +42,9 @@ omega = 2. / 3.
 neumann_solve = False
 
 ds = ns.model.data.Grid.load_dir(args.system)
+ds_size = list(map(lambda grid: grid.A.shape[0], ds))
+
+print(f'Smallest problem: {np.min(ds_size)};  largest problem: {np.max(ds_size)}')
 
 def evaluate_dataset(dataset, use_model=True):
     conv = np.zeros(len(dataset))
@@ -89,14 +90,25 @@ ml_avg = np.average(ml)
 
 plt.figure(figsize=(8,8))
 plt.title('ML vs Lloyd Convergence Analysis')
-plt.plot(baseline, ml, 'o', markersize=5, alpha=0.7, label='Convergence')
-plt.plot([0, 1], [0, 1], label='Diagonal')
-plt.plot([0, 1], [ml_avg, ml_avg], label='ML Average')
-plt.plot([baseline_avg, baseline_avg], [0, 1], label='Baseline Average')
+# plt.plot(baseline, ml, 'o', markersize=5, alpha=0.7, label='Convergence')
+plt.scatter(baseline, ml, s=np.array(ds_size)**0.8, alpha=0.7, label='Convergence')
+plt.plot([0, 1], [0, 1], 'tab:orange', label='Diagonal')
+plt.plot([0, 1], [ml_avg, ml_avg], 'tab:green', label='ML Average')
+plt.plot([baseline_avg, baseline_avg], [0, 1], 'tab:red', label='Baseline Average')
 plt.xlim((0, 1))
 plt.ylim((0, 1))
 plt.xlabel('Lloyd + SA Baseline Convergence')
 plt.ylabel('ML Convergence')
 plt.axis('equal')
+plt.grid()
+plt.legend()
+
+plt.figure(figsize=(8,8))
+plt.title('Convergence of Lloyd and ML vs Problem Size')
+plt.semilogx(ds_size, baseline, 'o', label='Baseline Convergence')
+plt.semilogx(ds_size, ml, 'o', label='ML Convergence')
+plt.xlabel('Problem Size (DOF)')
+plt.ylabel('Convergence Rate')
+plt.grid()
 plt.legend()
 plt.show()

@@ -23,6 +23,7 @@ import ns.lib.sparse
 import ns.lib.sparse_tensor
 import ns.lib.multigrid
 import ns.lib.graph
+import ns.ga.parga
 
 def parse_bool_str(v):
     v = v.lower()
@@ -132,8 +133,6 @@ np.random.seed()
 device = 'cpu'
 
 A_T = ns.lib.sparse.to_torch_sparse(A).to(device)
-print(' -- Problem setup --')
-print('A\n', A.todense())
 
 # Set up Jacobi smoother
 Dinv = sp.diags([1.0 / A.diagonal()], [0])
@@ -232,16 +231,9 @@ def plot_grid(agg, P, bf_weights, cluster_centers, node_scores):
     plt.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'y*', markersize=10)
     plt.gca().set_aspect('equal')
 
-plt.ion()
-plt.figure(figsize=figure_size)
-plot_grid(Agg, P_SA, A, Agg_roots, torch.zeros(A.shape[0]))
-plt.title(f'Baseline, conv={loss_fcn(A, ns.lib.sparse.to_torch_sparse(P_SA)):.4f}')
-plt.savefig(f'{fig_directory}/baseline.pdf')
-plt.pause(0.1)
-
 def display_progress(ga_instance):
     weights = ga_instance.best_solution()
-    gen = ga_instance.generations_completed
+    gen = ga_instance.num_generation
 
     agg, P, bf_weights, cluster_centers, node_scores = compute_agg_and_p(weights[0])
     agg = ns.lib.sparse_tensor.to_scipy(agg)
@@ -262,16 +254,30 @@ def display_progress(ga_instance):
     torch.save(model.state_dict(), f'models/{args.system}_{suffix}')
 
 if __name__ == '__main__':
+    plt.ion()
+    plt.figure(figsize=figure_size)
+    plot_grid(Agg, P_SA, A, Agg_roots, torch.zeros(A.shape[0]))
+    plt.title(f'Baseline, conv={loss_fcn(A, ns.lib.sparse.to_torch_sparse(P_SA)):.4f}')
+    plt.savefig(f'{fig_directory}/baseline.pdf')
+    plt.pause(0.1)
+
     model = ns.model.agg_interp.FullAggNet(64, use_aggnet=ml_aggregator, use_pnet=ml_interpolator)
     initial_population = pygad.torchga.TorchGA(model=model, num_solutions=args.initial_population_size).population_weights
-    ga_instance = pygad.GA(num_generations=args.max_generations,
-                           num_parents_mating=5,
-                           initial_population=initial_population,
-                           fitness_func=fitness,
-                           on_generation=display_progress,
-                           mutation_probability=0.4,
-                           random_mutation_min_val=-3.,
-                           random_mutation_max_val=3.,
-                           keep_parents=1)
+
+    ga_instance = ns.ga.parga.ParallelGA(initial_population=initial_population,
+                                         fitness_func=fitness,
+                                         crossover_probability=0.4,
+                                         mutation_probability=0.7,
+                                         mutation_min_perturb=-3.,
+                                         mutation_max_perturb=3.,
+                                         steady_state_top_use=2./3.,
+                                         steady_state_bottom_discard=1./4.,
+                                         num_workers=3)
+    ga_instance.start_workers()
     display_progress(ga_instance)
-    ga_instance.run()
+
+    for i in range(args.max_generations):
+        ga_instance.iteration()
+        display_progress(ga_instance)
+
+    ga_instance.finish_workers()

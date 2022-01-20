@@ -38,7 +38,9 @@ parser.add_argument('system', type=str, help='Problem in data folder to train on
 parser.add_argument('--max-generations', type=int, default=500, help='Maximum number of training generations')
 parser.add_argument('--initial-population-size', type=int, default=20, help='Initial population size')
 parser.add_argument('--alpha', type=float, default=None, help='Coarsening ratio for aggregation')
-parser.add_argument('--workers', type=int, default=4, help='Number of workers to use for parallel GA training')
+parser.add_argument('--workers', type=int, default=3, help='Number of workers to use for parallel GA training')
+parser.add_argument('--start-generation', type=int, default=0, help='Initial generation (used for resuming training)')
+parser.add_argument('--start-model', type=str, default=None, help='Initial generation (used for resuming training)')
 args = parser.parse_args()
 
 neumann_solve = False
@@ -46,10 +48,33 @@ alpha = 0.3
 omega = 2. / 3.
 
 train = ns.model.data.Grid.load_dir(os.path.join(args.system, 'train'))[::8]
-test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[::4]
+test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[::8]
 model = ns.model.agg_interp.FullAggNet(64)
 
-def evaluate_dataset(weights, dataset, use_model=True):
+def evaluate_ref_conv(dataset):
+    conv = np.zeros(len(dataset))
+    for i in range(len(dataset)):
+        A = dataset[i].A
+        Agg, _ = pyamg.aggregation.lloyd_aggregation(A, ratio=alpha)
+        P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, Agg)
+        b = np.zeros(A.shape[1])
+
+        np.random.seed(0)
+        x = np.random.randn(A.shape[1])
+        x /= la.norm(x, 2)
+        np.random.seed()
+
+        res = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega)[1]
+        if np.isnan(res):
+            conv[i] = 0.0
+        else:
+            conv[i] = res
+    return conv
+
+train_ref_conv = evaluate_ref_conv(train)
+test_ref_conv = evaluate_ref_conv(test)
+
+def evaluate_dataset(weights, dataset, ref_conv=None, use_model=True):
     if use_model:
         model.load_state_dict(pygad.torchga.model_weights_as_dict(model, weights))
         model.eval()
@@ -76,18 +101,19 @@ def evaluate_dataset(weights, dataset, use_model=True):
             conv[i] = 0.0
         else:
             conv[i] = res
+    #return np.average(conv / ref_conv)
     return np.average(conv)
 
 
 def fitness(weights, weights_idx):
-    conv = evaluate_dataset(weights, train)
+    conv = evaluate_dataset(weights, train, train_ref_conv)
     return 1 - conv
 
 
 def display_progress(ga_instance):
     weights, fitness, _ = ga_instance.best_solution()
     gen = ga_instance.num_generation
-    test_loss = evaluate_dataset(weights, test)
+    test_loss = evaluate_dataset(weights, test, test_ref_conv)
 
     print(f'Generation = {gen}')
     print(f'Train Loss = {1.0 - fitness}')
@@ -103,14 +129,19 @@ def display_progress(ga_instance):
 
 if __name__ == '__main__':
     writer = tensorboard.SummaryWriter()
-    train_benchmark = evaluate_dataset(None, train, False)
-    test_benchmark = evaluate_dataset(None, test, False)
+    # train_benchmark = 1
+    # test_benchmark = 1
+    train_benchmark = np.average(train_ref_conv)
+    test_benchmark = np.average(test_ref_conv)
 
     try:
         os.mkdir('models_chkpt')
     except:
         pass
 
+    if args.start_model is not None:
+        model.load_state_dict(torch.load(args.start_model))
+        model.eval()
     initial_population = np.array(pygad.torchga.TorchGA(model=model, num_solutions=args.initial_population_size).population_weights)
     ga_instance = ns.ga.parga.ParallelGA(initial_population=initial_population,
                                          fitness_func=fitness,
@@ -121,6 +152,7 @@ if __name__ == '__main__':
                                          steady_state_top_use=2./3.,
                                          steady_state_bottom_discard=1./4.,
                                          num_workers=args.workers)
+    ga_instance.num_generation = args.start_generation
     ga_instance.start_workers()
     display_progress(ga_instance)
 
