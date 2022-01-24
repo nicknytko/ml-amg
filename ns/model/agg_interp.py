@@ -173,18 +173,15 @@ class AggNet(nn.Module):
     def __init__(self, node_activation=nn.ReLU(), edge_activation=nn.ReLU()):
         super(AggNet, self).__init__()
 
-        self.norm1 = tg.nn.norm.InstanceNorm(1);  self.nc1 = tg.nn.ChebConv(1,  4, K=3)
-        self.norm2 = tg.nn.norm.InstanceNorm(4);  self.nc2 = tg.nn.ChebConv(4,  16, K=3)
-        self.norm3 = tg.nn.norm.InstanceNorm(16); self.nc3 = tg.nn.ChebConv(16, 64, K=3)
-        self.norm4 = tg.nn.norm.InstanceNorm(64); self.nc4 = tg.nn.ChebConv(64, 1, K=3)
-        self.ec1 = smallEdgeModel(1*2+1, 2, 1)
-        self.ec2 = smallEdgeModel(1*2+1, 2, 1)
-        # self.ec1 = EdgeModel()
-        # self.ec2 = EdgeModel()
+        self.nc1 = tg.nn.TAGConv(1,  4, K=3)
+        self.nc2 = tg.nn.TAGConv(4,  16, K=3)
+        self.nc3 = tg.nn.TAGConv(16, 64, K=3)
+        self.nc4 = tg.nn.TAGConv(64, 32, K=3)
+        self.nc5 = tg.nn.TAGConv(32, 1, K=3)
 
-        self.lin1 = nn.Linear(85, 40)
-        self.lin2 = nn.Linear(40, 16)
-        self.lin3 = nn.Linear(16, 1)
+        self.lin1 = nn.Linear(117, 70)
+        self.lin2 = nn.Linear(70, 30)
+        self.lin3 = nn.Linear(30, 1)
 
         self.node_activation = node_activation
         self.edge_activation = edge_activation
@@ -196,20 +193,16 @@ class AggNet(nn.Module):
         row = edge_index[0]
         col = edge_index[1]
 
-        x1 = nnF.relu(self.nc1(self.norm1(x), edge_index, abs(edge_attr)))
-        x2 = nnF.relu(self.nc2(self.norm2(x1), edge_index, abs(edge_attr)))
-        x3 = nnF.relu(self.nc3(self.norm3(x2), edge_index, abs(edge_attr)))
-        x4 = nnF.relu(self.nc4(self.norm4(x3), edge_index, abs(edge_attr)))
+        x1 = nnF.relu(self.nc1(x, edge_index, abs(edge_attr)))
+        x2 = nnF.relu(self.nc2(x1, edge_index, abs(edge_attr)))
+        x3 = nnF.relu(self.nc3(x2, edge_index, abs(edge_attr)))
+        x4 = nnF.relu(self.nc4(x3, edge_index, abs(edge_attr)))
+        x5 = nnF.relu(self.nc5(x4, edge_index, abs(edge_attr)))
 
-        x_stack = torch.column_stack((x1, x2, x3, x4))
+        x_stack = torch.column_stack((x1, x2, x3, x4, x5))
         x = nnF.relu(self.lin1(x_stack))
         x = nnF.relu(self.lin2(x))
         x = self.node_activation(self.lin3(x))
-
-        edge_attr = nnF.relu(self.ec1(x[row], x[col], edge_attr.float()))
-        edge_attr = self.edge_activation(self.ec2(x[row], x[col], edge_attr.float()))
-        # edge_attr = self.ec1(x, edge_index, edge_attr)
-        # edge_attr = self.ec2(x, edge_index, edge_attr)
 
         return x, edge_attr
 
