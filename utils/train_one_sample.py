@@ -17,7 +17,6 @@ import networkx as nx
 
 sys.path.append('../')
 import ns.model.agg_interp
-import ns.model.loss
 import ns.model.data
 import ns.lib.sparse
 import ns.lib.sparse_tensor
@@ -33,7 +32,7 @@ def parse_bool_str(v):
         return False
 
 parser = argparse.ArgumentParser(description='Demo of the aggregate-picking network')
-parser.add_argument('system', choices=['1d_neumann', '1d_dirichlet', '2d_isotropic', '2d_anisotropic'], help='Problem selection to run demo on')
+parser.add_argument('system', type=str, help='Problem selection to run demo on')
 parser.add_argument('--n', type=int, default=None, help='Size of the system.  In 2d, this determines the legnth in one dimension')
 parser.add_argument('--max-generations', type=int, default=500, help='Maximum number of training generations')
 parser.add_argument('--initial-population-size', type=int, default=50, help='Initial population size')
@@ -57,17 +56,18 @@ else:
     suffix = 'interp'
     title = 'Lloyd, ML interpolation'
 
-fig_directory = f'figures/{args.system}_figures_{suffix}'
 alpha = args.alpha
 
-if not os.path.exists('figures'):
-    os.mkdir('figures')
-if not os.path.exists(fig_directory):
-    os.mkdir(fig_directory)
-if not os.path.exists('models'):
-    os.mkdir('models')
-
-if args.system == '1d_dirichlet':
+if os.path.exists(args.system):
+    if alpha is None:
+        alpha = 1. / 3.
+    grid = ns.model.data.Grid.load(args.system)
+    A = grid.A
+    n = A.shape[0]
+    np.random.seed(0)
+    Agg, Agg_roots = pyamg.aggregation.lloyd_aggregation(A, ratio=alpha)
+    figure_size = (10,10)
+elif args.system == '1d_dirichlet':
     figure_size = (10,3)
     if alpha is None:
         alpha = 1. / 3.
@@ -246,19 +246,16 @@ def display_progress(ga_instance):
     plot_grid(agg, P, bf_weights, cluster_centers, node_scores)
     plt.title(f'Generation {gen}, {title}, conv={1.0/weights[1]:.4f}')
     plt.pause(0.1)
-    plt.savefig(f'{fig_directory}/{gen}_agg.pdf')
 
     model = ns.model.agg_interp.FullAggNet(64, use_aggnet=ml_aggregator, use_pnet=ml_interpolator)
     model.load_state_dict(pygad.torchga.model_weights_as_dict(model, weights[0]))
     model.eval()
-    torch.save(model.state_dict(), f'models/{args.system}_{suffix}')
 
 if __name__ == '__main__':
     plt.ion()
     plt.figure(figsize=figure_size)
     plot_grid(Agg, P_SA, A, Agg_roots, torch.zeros(A.shape[0]))
     plt.title(f'Baseline, conv={loss_fcn(A, ns.lib.sparse.to_torch_sparse(P_SA)):.4f}')
-    plt.savefig(f'{fig_directory}/baseline.pdf')
     plt.pause(0.1)
 
     model = ns.model.agg_interp.FullAggNet(64, use_aggnet=ml_aggregator, use_pnet=ml_interpolator)

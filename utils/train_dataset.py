@@ -18,7 +18,6 @@ import networkx as nx
 
 sys.path.append('../')
 import ns.model.agg_interp
-import ns.model.loss
 import ns.model.data
 import ns.lib.sparse
 import ns.lib.sparse_tensor

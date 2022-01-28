@@ -169,64 +169,43 @@ class PNet(nn.Module):
         # Compute P := \hat{P} \hat{Agg}
         return torch.sparse.mm(P_hat, agg_T).coalesce()
 
+class AggLayer(nn.Module):
+    def __init__(self, first_layer=False, node_activation=nn.ReLU()):
+        super(AggLayer, self).__init__()
+
+        self.nc1 = tg.nn.TAGConv(1 if first_layer else 2, 8, K=3)
+        self.nc2 = tg.nn.TAGConv(8, 8, K=3)
+        self.nc3 = tg.nn.TAGConv(8, 1, K=3)
+        self.norm = tg.nn.InstanceNorm(1)
+
+    def forward(self, x, edge_index, edge_attr, k):
+        if len(x.shape) == 1:
+            x = torch.unsqueeze(x, 1)
+
+        x = nnF.relu(self.nc1(x, edge_index, abs(edge_attr)))
+        x = nnF.relu(self.nc2(x, edge_index, abs(edge_attr)))
+        x = nnF.relu(self.nc3(x, edge_index, abs(edge_attr)))
+        x = self.norm(x).squeeze()
+
+        top_k = torch.argsort(x, descending=True)[:k]
+        top_k_vec = torch.zeros(x.shape)
+        top_k_vec[top_k] = 1.0 # (n, 1), with 1.0 for cluster centers and 0.0 elsewhere
+
+        return torch.column_stack((x, top_k_vec))
+    
 class AggNet(nn.Module):
-    def __init__(self, node_activation=nn.ReLU(), edge_activation=nn.ReLU()):
+    def __init__(self, iterations=4):
         super(AggNet, self).__init__()
-
-        self.nc1 = tg.nn.TAGConv(1,  8, K=3)
-        self.nc2 = tg.nn.TAGConv(8, 32, K=3)
-        self.nc3 = tg.nn.TAGConv(32, 8, K=3)
-        self.nc4 = tg.nn.TAGConv(8,  1, K=3)
-
-        self.lin1 = nn.Linear(49, 20)
-        self.lin2 = nn.Linear(20,  1)
-
-        self.nc5 = tg.nn.TAGConv(2,  8, K=3)
-        self.nc6 = tg.nn.TAGConv(8, 32, K=3)
-        self.nc7 = tg.nn.TAGConv(32, 8, K=3)
-        self.nc8 = tg.nn.TAGConv(8,  1, K=3)
-
-        self.lin3 = nn.Linear(100, 50)
-        self.lin4 = nn.Linear(50,  25)
-        self.lin5 = nn.Linear(25,   1)
-
-        self.node_activation = node_activation
-        self.edge_activation = edge_activation
+        layers = []
+        for i in range(iterations):
+            layers.append(AggLayer(i == 0))
+        self.layers = nn.ModuleList(layers)
 
     def forward(self, D, k):
-        x_in_1, edge_index, edge_attr = D.x, D.edge_index, D.edge_attr
-        x_in_1 = x_in_1.reshape((-1, 1))
-
-        # do first iteration
-        xc_1 = nnF.relu(self.nc1(x_in_1, edge_index, abs(edge_attr)))
-        xc_2 = nnF.relu(self.nc2(xc_1, edge_index, abs(edge_attr)))
-        xc_3 = nnF.relu(self.nc3(xc_2, edge_index, abs(edge_attr)))
-        xc_4 = nnF.relu(self.nc4(xc_3, edge_index, abs(edge_attr)))
-
-        # construct feature map then linearly collapse into vector
-        x_stack_1 = torch.column_stack((xc_1, xc_2, xc_3, xc_4)) # (n, 49)
-        x_iter_1 = nnF.relu(self.lin1(x_stack_1))
-        x_iter_1 = nnF.relu(self.lin2(x_iter_1))
-
-        # Construct the cluster vector after one iteration
-        top_k = torch.argsort(x_iter_1, descending=True)[:k]
-        top_k_vec = torch.zeros(x_in_1.shape)
-        top_k_vec[top_k] = 1.0 # (n, 1), with 1.0 for cluster centers and 0.0 elsewhere
-        x_in_2 = torch.column_stack((x_iter_1, top_k_vec))
-
-        # do second iteration
-        xc_5 = nnF.relu(self.nc5(x_in_2, edge_index, abs(edge_attr)))
-        xc_6 = nnF.relu(self.nc6(xc_5, edge_index, abs(edge_attr)))
-        xc_7 = nnF.relu(self.nc7(xc_6, edge_index, abs(edge_attr)))
-        xc_8 = nnF.relu(self.nc8(xc_7, edge_index, abs(edge_attr)))
-        x_stack_2 = torch.column_stack((xc_1, xc_2, xc_3, x_in_2, xc_4, xc_5, xc_6, xc_7, xc_8))
-
-        # feature map featuring all convolutions so far, collapse into final node scoring
-        x_iter_2 = nnF.relu(self.lin3(x_stack_2))
-        x_iter_2 = nnF.relu(self.lin4(x_iter_2))
-        x_iter_2 = self.node_activation(self.lin5(x_iter_2))
-
-        return x_iter_2, edge_attr
+        x, edge_index, edge_attr = D.x, D.edge_index, D.edge_attr
+        for layer in self.layers:
+            x = layer(x, edge_index, edge_attr, k)
+        return x[:,0], edge_attr
 
 class FullAggNet(nn.Module):
     '''
@@ -247,7 +226,7 @@ class FullAggNet(nn.Module):
             self.PNet = None
 
         if use_aggnet:
-            self.AggNet = AggNet()
+            self.AggNet = AggNet(iterations=6)
         else:
             self.AggNet = None
 
