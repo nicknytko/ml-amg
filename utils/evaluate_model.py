@@ -8,6 +8,7 @@ import os
 import pyamg
 import matplotlib
 import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import pygad
 import pygad.torchga
 import argparse
@@ -33,11 +34,19 @@ parser.add_argument('--model', type=str, help='Model file to evaluate')
 parser.add_argument('--n', type=int, default=None, help='Size of the system.  In 2d, this determines the legnth in one dimension')
 parser.add_argument('--alpha', type=float, default=None, help='Coarsening ratio for aggregation')
 parser.add_argument('--spiderplot', type=parse_bool_str, default=True, help='Enable spider plot')
+parser.add_argument('--strength-of-measure', default='abs', choices=['abs', 'evolution', 'invabs', 'unit'])
 args = parser.parse_args()
 
 N = args.n
 alpha = args.alpha
 neumann_solve = False
+
+strength_of_measure_funcs = {
+    'abs': lambda A: abs(A),
+    'evolution': lambda A: pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((np.ones_like(A.data), A.indices, A.indptr), A.shape) * 0.1,
+    'invabs': lambda A: sp.csr_matrix((1.0 / np.abs(A.data), A.indices, A.indptr), A.shape),
+    'unit': lambda A: sp.csr_matrix((np.ones_like(A.data), A.indices, A.indptr), A.shape)
+}
 
 if os.path.exists(args.system):
     if alpha is None:
@@ -46,7 +55,8 @@ if os.path.exists(args.system):
     A = grid.A
     n = A.shape[0]
     np.random.seed(0)
-    Agg, Agg_roots = pyamg.aggregation.lloyd_aggregation(A, ratio=alpha)
+    C = strength_of_measure_funcs[args.strength_of_measure](A)
+    Agg, Agg_roots = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
     figure_size = (10,10)
 elif args.system == '1d_dirichlet':
     figure_size = (10,3)
@@ -131,8 +141,9 @@ Agg_roots_T = torch.Tensor(Agg_roots)
 A_Graph = ns.model.data.graph_from_matrix_basic(A)
 
 def compute_agg_and_p(model):
+    C = strength_of_measure_funcs[args.strength_of_measure](A)    
     with torch.no_grad():
-        agg_T, P, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
+        agg_T, P, bf_weights, cluster_centers, node_scores = model.forward(A, alpha, C)
         agg_sp = ns.lib.sparse_tensor.to_scipy(agg_T)
 
     return agg_T, P, bf_weights, cluster_centers, node_scores
@@ -172,7 +183,7 @@ def plot_grid(agg, P, bf_weights, cluster_centers, node_scores):
     plt.gca().set_aspect('equal')
 
 plt.figure(figsize=figure_size)
-plot_grid(Agg, P_SA, A, Agg_roots, torch.zeros(A.shape[0]))
+plot_grid(Agg, P_SA, C, Agg_roots, torch.zeros(A.shape[0]))
 plt.title(f'Baseline Lloyd + Jacobi, conv={loss_fcn(A, ns.lib.sparse.to_torch_sparse(P_SA)):.4f}')
 
 model = ns.model.agg_interp.FullAggNet(64)
@@ -183,6 +194,38 @@ agg_T, P, bf_weights, cluster_centers, node_scores = compute_agg_and_p(model)
 plt.figure(figsize=figure_size)
 plot_grid(ns.lib.sparse_tensor.to_scipy(agg_T), P, bf_weights, cluster_centers, node_scores)
 conv = loss_fcn(A, P)
-plt.title(f'ML AMG, conv={conv:.4f}')
+
+if 'theta' in grid.extra and 'epsilon' in grid.extra:
+    plot_title = f'ML AMG, conv={conv:.4f}, theta={grid.extra["theta"]/np.pi:.2f}π, epsilon={grid.extra["epsilon"]:.3e}'
+    plt.title(plot_title)
+    
+    theta = grid.extra['theta']
+    epsilon = grid.extra['epsilon']
+    c, s = np.cos(theta), np.sin(theta)
+    Q = np.array([
+        [c, -s],
+        [s, c]
+    ])
+    A = np.diag([1., epsilon])
+    D = Q@A@Q.T
+    eigvals, eigvecs = la.eig(D)
+    eigvals /= la.norm(eigvals, np.inf)
+    v1 = eigvecs[:,0] * eigvals[0]
+    v2 = eigvecs[:,1] * eigvals[1]
+
+    inset_axes = inset_axes(plt.gca(),
+                    width=1,                     # inch
+                    height=1,                    # inch
+                    bbox_transform=plt.gca().transAxes, # relative axes coordinates
+                    bbox_to_anchor=(0.0, 0.0),    # relative axes coordinates
+                    loc=3)                       # loc=lower left corner
+    
+    inset_axes.arrow(0, 0, v1[0], v1[1])
+    inset_axes.arrow(0, 0, v2[0], v2[1])
+    inset_axes.set_xlim(left=-1, right=1)
+    inset_axes.set_ylim(bottom=-1, top=1)
+else:
+    plot_title = f'ML AMG, conv={conv:.4f}'
+    plt.title(plot_title)
 plt.show()
 print('Convergence', conv)

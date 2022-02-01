@@ -40,11 +40,19 @@ parser.add_argument('--alpha', type=float, default=None, help='Coarsening ratio 
 parser.add_argument('--workers', type=int, default=3, help='Number of workers to use for parallel GA training')
 parser.add_argument('--start-generation', type=int, default=0, help='Initial generation (used for resuming training)')
 parser.add_argument('--start-model', type=str, default=None, help='Initial generation (used for resuming training)')
+parser.add_argument('--strength-of-measure', default='abs', choices=['abs', 'evolution', 'invabs', 'unit'])
 args = parser.parse_args()
 
 neumann_solve = False
 alpha = 0.3
 omega = 2. / 3.
+
+strength_of_measure_funcs = {
+    'abs': lambda A: abs(A),
+    'evolution': lambda A: pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((np.ones_like(A.data), A.indices, A.indptr), A.shape) * 0.1,
+    'invabs': lambda A: sp.csr_matrix((1.0 / np.abs(A.data), A.indices, A.indptr), A.shape),
+    'unit': lambda A: sp.csr_matrix((np.ones_like(A.data), A.indices, A.indptr), A.shape)
+}
 
 train = ns.model.data.Grid.load_dir(os.path.join(args.system, 'train'))[::8]
 test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[::8]
@@ -54,7 +62,8 @@ def evaluate_ref_conv(dataset):
     conv = np.zeros(len(dataset))
     for i in range(len(dataset)):
         A = dataset[i].A
-        Agg, _ = pyamg.aggregation.lloyd_aggregation(A, ratio=alpha)
+        C = strength_of_measure_funcs[args.strength_of_measure](A)
+        Agg, _ = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
         P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, Agg)
         b = np.zeros(A.shape[1])
 
@@ -81,12 +90,13 @@ def evaluate_dataset(weights, dataset, ref_conv=None, use_model=True):
     conv = np.zeros(len(dataset))
     for i in range(len(dataset)):
         A = dataset[i].A
+        C = strength_of_measure_funcs[args.strength_of_measure](A)
         if use_model:
             with torch.no_grad():
-                agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
+                agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha, C)
             P = ns.lib.sparse_tensor.to_scipy(P_T)
         else:
-            Agg, _ = pyamg.aggregation.lloyd_aggregation(A, ratio=alpha)
+            Agg, _ = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
             P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, Agg)
         b = np.zeros(A.shape[1])
 

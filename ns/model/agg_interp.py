@@ -205,7 +205,7 @@ class AggNet(nn.Module):
         x, edge_index, edge_attr = D.x, D.edge_index, D.edge_attr
         for layer in self.layers:
             x = layer(x, edge_index, edge_attr, k)
-        return x[:,0], edge_attr
+        return x[:,0]
 
 class FullAggNet(nn.Module):
     '''
@@ -226,7 +226,7 @@ class FullAggNet(nn.Module):
             self.PNet = None
 
         if use_aggnet:
-            self.AggNet = AggNet(iterations=6)
+            self.AggNet = AggNet(iterations=4)
         else:
             self.AggNet = None
 
@@ -247,15 +247,18 @@ class FullAggNet(nn.Module):
 
         return torch.sparse.mm(P_hat, agg_T).coalesce()
 
-    def forward(self, A, alpha):
+    def forward(self, A, alpha, C=None):
         '''
         Parameters
         ----------
         A : scipy.sparse.csr_matrix
-          System to compute interpolation on
+          System to compute interpolation and aggregates on
         alpha : float
           Ratio of nodes to use as aggregate centers.
           This coarsens the fine grid by roughly 1/alpha
+        C : scipy.sparse.csr_matrix, optional
+          Strength of measure matrix that is used for Bellman-ford.  If not specified,
+          will default to absolute value of A.
 
         Returns
         -------
@@ -275,17 +278,21 @@ class FullAggNet(nn.Module):
         m, n = A.shape
         k = int(np.ceil(alpha * m))
 
+        # If no strength of connection measure is given, then default to abs(A)
+        if C is None:
+            C = abs(A)
+        
         # Compute node scores and edge weights
         data_simple = ns.model.data.graph_from_matrix_basic(A)
-        node_scores, edges = self.AggNet(data_simple, k)
-        node_scores = node_scores.squeeze(); edges = edges.squeeze()
-        BF_weights = torch.sparse_coo_tensor(data_simple.edge_index, edges, (m, n)).coalesce()
+        node_scores = self.AggNet(data_simple, k)
+        node_scores = node_scores.squeeze()
+        BF_weights = ns.lib.sparse.to_torch_sparse(C)
 
         # Find cluster centers
         top_k = torch.argsort(node_scores, descending=True)[:k]
 
         # Run Bellman-Ford to assign each node to an aggregate
-        distance, nearest_center = ns.lib.graph.modified_bellman_ford(BF_weights, top_k)
+        distance, nearest_center = ns.lib.graph.modified_bellman_ford(BF_weights, top_k)        
         agg_T = ns.lib.graph.nearest_center_to_agg(top_k, nearest_center)
 
         if self.PNet:
