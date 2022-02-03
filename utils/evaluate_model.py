@@ -34,7 +34,7 @@ parser.add_argument('--model', type=str, help='Model file to evaluate')
 parser.add_argument('--n', type=int, default=None, help='Size of the system.  In 2d, this determines the legnth in one dimension')
 parser.add_argument('--alpha', type=float, default=None, help='Coarsening ratio for aggregation')
 parser.add_argument('--spiderplot', type=parse_bool_str, default=True, help='Enable spider plot')
-parser.add_argument('--strength-of-measure', default='abs', choices=['abs', 'evolution', 'invabs', 'unit'])
+parser.add_argument('--strength-measure', default='abs', choices=['abs', 'evolution', 'invabs', 'unit', 'luke'])
 args = parser.parse_args()
 
 N = args.n
@@ -44,6 +44,7 @@ neumann_solve = False
 strength_of_measure_funcs = {
     'abs': lambda A: abs(A),
     'evolution': lambda A: pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((np.ones_like(A.data), A.indices, A.indptr), A.shape) * 0.1,
+    'luke': lambda A: pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((1./np.abs(A.data), A.indices, A.indptr), A.shape),
     'invabs': lambda A: sp.csr_matrix((1.0 / np.abs(A.data), A.indices, A.indptr), A.shape),
     'unit': lambda A: sp.csr_matrix((np.ones_like(A.data), A.indices, A.indptr), A.shape)
 }
@@ -55,7 +56,7 @@ if os.path.exists(args.system):
     A = grid.A
     n = A.shape[0]
     np.random.seed(0)
-    C = strength_of_measure_funcs[args.strength_of_measure](A)
+    C = strength_of_measure_funcs[args.strength_measure](A)
     Agg, Agg_roots = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
     figure_size = (10,10)
 elif args.system == '1d_dirichlet':
@@ -141,9 +142,9 @@ Agg_roots_T = torch.Tensor(Agg_roots)
 A_Graph = ns.model.data.graph_from_matrix_basic(A)
 
 def compute_agg_and_p(model):
-    C = strength_of_measure_funcs[args.strength_of_measure](A)    
+    C = strength_of_measure_funcs[args.strength_measure](A)
     with torch.no_grad():
-        agg_T, P, bf_weights, cluster_centers, node_scores = model.forward(A, alpha, C)
+        agg_T, P, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
         agg_sp = ns.lib.sparse_tensor.to_scipy(agg_T)
 
     return agg_T, P, bf_weights, cluster_centers, node_scores
@@ -198,7 +199,7 @@ conv = loss_fcn(A, P)
 if 'theta' in grid.extra and 'epsilon' in grid.extra:
     plot_title = f'ML AMG, conv={conv:.4f}, theta={grid.extra["theta"]/np.pi:.2f}π, epsilon={grid.extra["epsilon"]:.3e}'
     plt.title(plot_title)
-    
+
     theta = grid.extra['theta']
     epsilon = grid.extra['epsilon']
     c, s = np.cos(theta), np.sin(theta)
@@ -208,20 +209,18 @@ if 'theta' in grid.extra and 'epsilon' in grid.extra:
     ])
     A = np.diag([1., epsilon])
     D = Q@A@Q.T
-    eigvals, eigvecs = la.eig(D)
-    eigvals /= la.norm(eigvals, np.inf)
-    v1 = eigvecs[:,0] * eigvals[0]
-    v2 = eigvecs[:,1] * eigvals[1]
+    # eigvals, eigvecs = la.eig(D)
+    # eigvals /= la.norm(eigvals, np.inf)
+    # v1 = eigvecs[:,0] * eigvals[0]
+    # v2 = eigvecs[:,1] * eigvals[1]
+    v1 = (Q[:,0]) / (1+epsilon)
+    v2 = (Q[:,1] * epsilon) / (1+epsilon)
+    va = v1+v2
 
-    inset_axes = inset_axes(plt.gca(),
-                    width=1,                     # inch
-                    height=1,                    # inch
-                    bbox_transform=plt.gca().transAxes, # relative axes coordinates
-                    bbox_to_anchor=(0.0, 0.0),    # relative axes coordinates
-                    loc=3)                       # loc=lower left corner
-    
-    inset_axes.arrow(0, 0, v1[0], v1[1])
-    inset_axes.arrow(0, 0, v2[0], v2[1])
+    inset_axes = inset_axes(plt.gca(), width=1, height=1, bbox_transform=plt.gca().transAxes, bbox_to_anchor=(0.0, 0.0), loc=3)
+
+    inset_axes.arrow(0, 0, v1[0], v1[1], head_width=.1, head_length=.1)
+    inset_axes.arrow(0, 0, v2[0], v2[1], head_width=.1, head_length=.1, color='red')
     inset_axes.set_xlim(left=-1, right=1)
     inset_axes.set_ylim(bottom=-1, top=1)
 else:
