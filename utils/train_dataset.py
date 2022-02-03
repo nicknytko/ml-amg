@@ -18,7 +18,6 @@ import networkx as nx
 
 sys.path.append('../')
 import ns.model.agg_interp
-import ns.model.loss
 import ns.model.data
 import ns.lib.sparse
 import ns.lib.sparse_tensor
@@ -26,12 +25,7 @@ import ns.lib.multigrid
 import ns.lib.graph
 import ns.ga.parga
 
-def parse_bool_str(v):
-    v = v.lower()
-    if v == 't' or v == 'true':
-        return True
-    else:
-        return False
+import common
 
 parser = argparse.ArgumentParser(description='Demo of the aggregate-picking network')
 parser.add_argument('system', type=str, help='Problem in data folder to train on')
@@ -41,79 +35,21 @@ parser.add_argument('--alpha', type=float, default=None, help='Coarsening ratio 
 parser.add_argument('--workers', type=int, default=3, help='Number of workers to use for parallel GA training')
 parser.add_argument('--start-generation', type=int, default=0, help='Initial generation (used for resuming training)')
 parser.add_argument('--start-model', type=str, default=None, help='Initial generation (used for resuming training)')
+parser.add_argument('--strength-measure', default='abs', choices=common.strength_measure_funcs.keys())
 args = parser.parse_args()
-
-neumann_solve = False
-alpha = 0.3
-omega = 2. / 3.
 
 train = ns.model.data.Grid.load_dir(os.path.join(args.system, 'train'))[::8]
 test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[::8]
 model = ns.model.agg_interp.FullAggNet(64)
 
-def evaluate_ref_conv(dataset):
-    conv = np.zeros(len(dataset))
-    for i in range(len(dataset)):
-        A = dataset[i].A
-        Agg, _ = pyamg.aggregation.lloyd_aggregation(A, ratio=alpha)
-        P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, Agg)
-        b = np.zeros(A.shape[1])
-
-        np.random.seed(0)
-        x = np.random.randn(A.shape[1])
-        x /= la.norm(x, 2)
-        np.random.seed()
-
-        res = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega)[1]
-        if np.isnan(res):
-            conv[i] = 0.0
-        else:
-            conv[i] = res
-    return conv
-
-train_ref_conv = evaluate_ref_conv(train)
-test_ref_conv = evaluate_ref_conv(test)
-
-def evaluate_dataset(weights, dataset, ref_conv=None, use_model=True):
-    if use_model:
-        model.load_state_dict(pygad.torchga.model_weights_as_dict(model, weights))
-        model.eval()
-
-    conv = np.zeros(len(dataset))
-    for i in range(len(dataset)):
-        A = dataset[i].A
-        if use_model:
-            with torch.no_grad():
-                agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
-            P = ns.lib.sparse_tensor.to_scipy(P_T)
-        else:
-            Agg, _ = pyamg.aggregation.lloyd_aggregation(A, ratio=alpha)
-            P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, Agg)
-        b = np.zeros(A.shape[1])
-
-        np.random.seed(0)
-        x = np.random.randn(A.shape[1])
-        x /= la.norm(x, 2)
-        np.random.seed()
-
-        res = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega)[1]
-        if np.isnan(res):
-            conv[i] = 0.0
-        else:
-            conv[i] = res
-    #return np.average(conv / ref_conv)
-    return np.average(conv)
-
-
 def fitness(weights, weights_idx):
-    conv = evaluate_dataset(weights, train, train_ref_conv)
+    conv = common.evaluate_dataset(weights, train, model)
     return 1 - conv
-
 
 def display_progress(ga_instance):
     weights, fitness, _ = ga_instance.best_solution()
     gen = ga_instance.num_generation
-    test_loss = evaluate_dataset(weights, test, test_ref_conv)
+    test_loss = common.evaluate_dataset(weights, test, model)
 
     print(f'Generation = {gen}')
     print(f'Train Loss = {1.0 - fitness}')
@@ -126,13 +62,12 @@ def display_progress(ga_instance):
     model.eval()
     torch.save(model.state_dict(), f'models_chkpt/model_{gen:03}')
 
-
 if __name__ == '__main__':
     writer = tensorboard.SummaryWriter()
-    # train_benchmark = 1
-    # test_benchmark = 1
-    train_benchmark = np.average(train_ref_conv)
-    test_benchmark = np.average(test_ref_conv)
+
+    S = common.strength_measure_funcs[args.strength_measure]
+    train_benchmark = np.average(common.evaluate_ref_conv(train, S))
+    test_benchmark = np.average(common.evaluate_ref_conv(test, S))
 
     try:
         os.mkdir('models_chkpt')

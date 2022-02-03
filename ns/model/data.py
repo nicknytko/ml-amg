@@ -46,7 +46,7 @@ def graph_from_matrix_basic(A):
     return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=abs(nx_data.edge_attr.float()))
 
 class Grid():
-    def __init__(self, A_csr, x=None):
+    def __init__(self, A_csr, x=None, extra={}):
         '''
         Initializes the grid object
 
@@ -60,6 +60,7 @@ class Grid():
 
         self.A = A_csr
         self.x = x
+        self.extra = extra
 
     @property
     def networkx(self):
@@ -188,10 +189,11 @@ class Grid():
     def save(self, fname):
         if not '.grid' in fname:
             fname = fname + '.grid'
-
+            
         ns.lib.helpers.pickle_save_bz2(fname, {
             'A': self.A,
-            'x': self.x
+            'x': self.x,
+            'extra': self.extra
         })
 
     def load(fname):
@@ -199,7 +201,7 @@ class Grid():
             fname = fname + '.grid'
 
         loaded = ns.lib.helpers.pickle_load_bz2(fname)
-        return Grid(loaded['A'], loaded['x'])
+        return Grid(loaded['A'], loaded['x'], loaded['extra'] if 'extra' in loaded else {})
 
     def load_dir(directory):
         grids = []
@@ -308,9 +310,11 @@ class Grid():
         A_d = R@A@R.T
         A_d.eliminate_zeros()
 
-        return Grid(A_d, (R@pts)[:, :2])
-
-
+        return Grid(A_d, (R@pts)[:, :2], {
+            'epsilon': epsilon,
+            'theta': theta
+        })
+    
     def structured_2d_poisson_dirichlet(n_pts_x, n_pts_y,
                                         xdim=(0,1), ydim=(0,1),
                                         epsilon=1.0, theta=0.0):
@@ -370,7 +374,10 @@ class Grid():
         A_d = R@A@R.T
         A_d.eliminate_zeros()
 
-        return Grid(A_d, R@v)
+        return Grid(A_d, R@v, {
+            'epsilon': epsilon,
+            'theta': theta
+        })
 
     def structured_2d_poisson_neumann(n_pts_x, n_pts_y,
                                       xdim=(0,1), ydim=(0,1),

@@ -20,7 +20,8 @@ def parse_bool_str(v):
 parser = argparse.ArgumentParser(description='Creation of diffusion data files')
 parser.add_argument('--n-grids', type=int, default=1000, help='Number of grids to generate')
 parser.add_argument('--out-folder', type=str, default=None, help='Output directory to put grids')
-parser.add_argument('--percent-structured', type=float, default=0.3, help='Percent of the created grids that should be on structured meshes')
+parser.add_argument('--percent-structured', type=float, default=0.0, help='Percent of the created grids that should be on structured meshes')
+parser.add_argument('--anisotropic', type=parse_bool_str, default=False, help='Should anisotropic grids be generated')
 args = parser.parse_args()
 
 os.makedirs(args.out_folder, exist_ok=True)
@@ -49,5 +50,13 @@ for i in range(args.n_grids):
             geom.add_polygon(bv, ms)
             mesh = geom.generate_mesh()
 
-        G = Grid.meshio_2d_poisson_dirichlet(mesh)
+        epsilon = 1.0
+        theta = 0.0
+        if args.anisotropic:
+            epsilon = 0
+            while abs(epsilon) < 1e-5:
+                epsilon = 10 ** np.random.uniform(-5, 5)
+                theta = np.random.uniform(0, 2 * np.pi)
+            
+        G = Grid.meshio_2d_poisson_dirichlet(mesh, epsilon, theta)
     G.save(os.path.join(args.out_folder, f'{i:04}'))
