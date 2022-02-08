@@ -60,8 +60,20 @@
 \renewcommand{\Re}{\text{Re}}
 
 \begin{document}
+\section{Copper Abstract}
+Algebraic Multigrid solvers are among the quickest for finding solutions to large, sparse linear systems of equations such as those arising from the discretization of PDEs.  Their implementation, however, often relies on constructing a coarse grid and transfer operators through the use of heuristics or other approximations; overall convergence is dependent on an optimal choice of parameters and methods used.  In this paper, we evaluate the use of neural networks to select such a coarse grid and transfer operators for isotropic and anisotropic diffusion problems.  We show how graph neural networks can be used to output a tentative set of node groupings, then interpolated into a coarse grid analogously to smoothed-aggregation multigrid.  Difficulties in training such neural networks due to the lack of gradient information is addressed through the use of genetic evolution strategies.  Finally, performance of the learned multigrid solver is compared to off-the-shelf methods from PyAMG.
+
 \section{Background}
-Here, we are attempting to train an ML agent to output both aggregates and interpolation for an AMG solver given some matrix $\mat{A}$.  We will explore how well such an agent can learn to generalize on an \textit{isotropic diffusion problem}, by generating datasets of \textit{only unstructured problems}:
+Here, we are attempting to train an ML agent to output both aggregates and interpolation for an AMG solver given the matrix $\mat{A}$ for a discretized PDE.  We will be primarily be looking at the finite element discretization of the isotropic and anisotropic diffusion problems, i.e. PDEs of the form
+\begin{equation}
+  -\grad \cdot \left(\mat{D} \grad u\right) = 0,
+\end{equation}
+\begin{equation}
+  \mat{D} = \begin{bmatrix} \cos \theta & -\sin \theta \\ \sin \theta & \cos \theta \end{bmatrix} \begin{bmatrix} 1 & \\ & \varepsilon \end{bmatrix} \begin{bmatrix} \cos \theta & -\sin \theta \\ \sin \theta & \cos \theta \end{bmatrix}^T,
+\end{equation}
+for some arbitrary $\theta$ and $\varepsilon$.  In the isotropic case, $\theta=0$ and $\varepsilon=1$.
+
+In both the isotropic and anisotropic cases, unstructured datasets of the following are generated:
 \begin{enumerate}
 \item A training set of 250 unstructured grids
 \item A testing set of 62 unstructured grids
@@ -75,7 +87,6 @@ To compute the aggregates and final interpolation operator, we concurrently trai
 \item $\Theta_{\text{soc}}$, outputting a strength-of-connection matrix for Bellman-Ford
 \item $\Theta_{P}$, outputting a smoothing operator
 \end{enumerate}
-
 The algorithm for computing the interpolation operator is roughly sketched below:
 \begin{enumerate}
 \item Let $\mat{A} \in \mathbb{R}^{n \times n}$ be the system we are trying to solve and $\alpha \in \left(0, 1\right]$ be some parameter that determines the ratio of aggregates to vertices, i.e. we will be roughly coarsening the graph by $1/\alpha$.  Define $k := \ceil{\alpha n}$, the number of aggregates we will be outputting.
@@ -90,22 +101,22 @@ Training of both networks is done at the same time with a custom-written genetic
 
 A basic overview of the training algorithm is that the method is seeded with some number of randomly generated networks. A subset of the best performing (most fit) networks are selected and \textit{bred} with one another (crossing weights/traits) and \textit{mutations} inserted (random perturbations to weights) to create another population of networks.  This is then repeated for many \textit{generations} until a set of hopefully trained networks is obtained, from which we can pick the best fit as our final network.
 
-%% \begin{figure}[h]
-%%   \centering
-%%   \begin{subfigure}[t]{0.49\textwidth}
-%%     \centering
-%%     \includegraphics[width=\textwidth]{train_loss.pdf}
-%%     \caption{Training loss}
-%%   \end{subfigure}
-%%   \hfill
-%%   \begin{subfigure}[t]{0.49\textwidth}
-%%     \centering
-%%     \includegraphics[width=\textwidth]{test_loss.pdf}
-%%     \caption{Testing loss}
-%%   \end{subfigure}
-%%   \caption{Loss plots per generation for training and testing datasets, respectively.}
-%%   \label{fig:loss}
-%% \end{figure}
+\begin{figure}[h]
+  \centering
+  \begin{subfigure}[t]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{train_loss.pdf}
+    \caption{Training loss}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{test_loss.pdf}
+    \caption{Testing loss}
+  \end{subfigure}
+  \caption{Loss plots per generation for training and testing datasets, respectively.}
+  \label{fig:loss}
+\end{figure}
 
 \begin{figure}[h]
   \centering
@@ -230,6 +241,24 @@ A basic overview of the training algorithm is that the method is seeded with som
   \centering
   \begin{subfigure}[t]{0.49\textwidth}
     \centering
+    \includegraphics[width=\textwidth]{anis_train_loss.pdf}
+    \caption{Training loss}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{anis_test_loss.pdf}
+    \caption{Testing loss}
+  \end{subfigure}
+  \caption{Loss plots per generation for anisotropic problem on training and testing datasets, respectively.}
+  \label{fig:anis_loss}
+\end{figure}
+
+
+\begin{figure}[h]
+  \centering
+  \begin{subfigure}[t]{0.49\textwidth}
+    \centering
     \includegraphics[width=\textwidth, trim=80 70 70 50, clip]{anis_grid_3_lloyd.pdf}
     \caption{Lloyd + Jacobi}
   \end{subfigure}
@@ -246,16 +275,16 @@ A basic overview of the training algorithm is that the method is seeded with som
   \centering
   \begin{subfigure}[t]{0.49\textwidth}
     \centering
-    \includegraphics[width=\textwidth, trim=80 70 70 50, clip]{anis_grid_5_lloyd.pdf}
+    \includegraphics[width=\textwidth, trim=80 70 70 50, clip]{anis_grid_36_lloyd.pdf}
     \caption{Lloyd + Jacobi}
   \end{subfigure}
   \begin{subfigure}[t]{0.49\textwidth}
     \centering
-    \includegraphics[width=\textwidth, trim=80 70 70 50, clip]{anis_grid_5_ml.pdf}
+    \includegraphics[width=\textwidth, trim=80 70 70 50, clip]{anis_grid_36_ml.pdf}
     \caption{ML}
   \end{subfigure}
   \caption{Aggregate and interpolation data for a random, anisotropic unstructured mesh.}
-  \label{fig:anis_grid_5}
+  \label{fig:anis_grid_36}
 \end{figure}
 
 \begin{figure}[h]
