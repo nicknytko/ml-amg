@@ -21,6 +21,8 @@ import ns.lib.sparse
 import ns.lib.sparse_tensor
 import ns.lib.multigrid
 
+import common
+
 def parse_bool_str(v):
     v = v.lower()
     if v == 't' or v == 'true':
@@ -34,29 +36,21 @@ parser.add_argument('--model', type=str, help='Model file to evaluate')
 parser.add_argument('--n', type=int, default=None, help='Size of the system.  In 2d, this determines the legnth in one dimension')
 parser.add_argument('--alpha', type=float, default=None, help='Coarsening ratio for aggregation')
 parser.add_argument('--spiderplot', type=parse_bool_str, default=True, help='Enable spider plot')
-parser.add_argument('--strength-measure', default='abs', choices=['abs', 'evolution', 'invabs', 'unit', 'luke'])
+parser.add_argument('--strength-measure', default='abs', choices=common.strength_measure_funcs.keys())
 args = parser.parse_args()
 
 N = args.n
 alpha = args.alpha
 neumann_solve = False
 
-strength_of_measure_funcs = {
-    'abs': lambda A: abs(A),
-    'evolution': lambda A: pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((np.ones_like(A.data), A.indices, A.indptr), A.shape) * 0.1,
-    'luke': lambda A: pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((1./np.abs(A.data), A.indices, A.indptr), A.shape),
-    'invabs': lambda A: sp.csr_matrix((1.0 / np.abs(A.data), A.indices, A.indptr), A.shape),
-    'unit': lambda A: sp.csr_matrix((np.ones_like(A.data), A.indices, A.indptr), A.shape)
-}
-
 if os.path.exists(args.system):
     if alpha is None:
-        alpha = 1. / 3.
+        alpha = .1
     grid = ns.model.data.Grid.load(args.system)
     A = grid.A
     n = A.shape[0]
     np.random.seed(0)
-    C = strength_of_measure_funcs[args.strength_measure](A)
+    C = common.strength_measure_funcs[args.strength_measure](A)
     Agg, Agg_roots = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
     figure_size = (10,10)
 elif args.system == '1d_dirichlet':
@@ -98,7 +92,7 @@ elif args.system == '1d_neumann':
 elif args.system == '2d_isotropic':
     figure_size = (10,10)
     if alpha is None:
-        alpha = 1. / 9.
+        alpha = .1
     if N is None:
         N = 8
     n = N**2
@@ -110,7 +104,7 @@ elif args.system == '2d_isotropic':
 elif args.system == '2d_anisotropic':
     figure_size = (10,10)
     if alpha is None:
-        alpha = 1. / 9.
+        alpha = .1
     if N is None:
         N = 8
     n = N**2
@@ -142,7 +136,7 @@ Agg_roots_T = torch.Tensor(Agg_roots)
 A_Graph = ns.model.data.graph_from_matrix_basic(A)
 
 def compute_agg_and_p(model):
-    C = strength_of_measure_funcs[args.strength_measure](A)
+    C = common.strength_measure_funcs[args.strength_measure](A)
     with torch.no_grad():
         agg_T, P, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
         agg_sp = ns.lib.sparse_tensor.to_scipy(agg_T)
@@ -209,10 +203,6 @@ if 'theta' in grid.extra and 'epsilon' in grid.extra:
     ])
     A = np.diag([1., epsilon])
     D = Q@A@Q.T
-    # eigvals, eigvecs = la.eig(D)
-    # eigvals /= la.norm(eigvals, np.inf)
-    # v1 = eigvecs[:,0] * eigvals[0]
-    # v2 = eigvecs[:,1] * eigvals[1]
     v1 = (Q[:,0]) / (1+epsilon)
     v2 = (Q[:,1] * epsilon) / (1+epsilon)
     va = v1+v2
