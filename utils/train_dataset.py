@@ -31,7 +31,7 @@ parser = argparse.ArgumentParser(description='Demo of the aggregate-picking netw
 parser.add_argument('system', type=str, help='Problem in data folder to train on')
 parser.add_argument('--max-generations', type=int, default=500, help='Maximum number of training generations')
 parser.add_argument('--initial-population-size', type=int, default=20, help='Initial population size')
-parser.add_argument('--alpha', type=float, default=None, help='Coarsening ratio for aggregation')
+parser.add_argument('--alpha', type=float, default=0.1, help='Coarsening ratio for aggregation')
 parser.add_argument('--workers', type=int, default=3, help='Number of workers to use for parallel GA training')
 parser.add_argument('--start-generation', type=int, default=0, help='Initial generation (used for resuming training)')
 parser.add_argument('--start-model', type=str, default=None, help='Initial generation (used for resuming training)')
@@ -43,13 +43,13 @@ test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[::8]
 model = ns.model.agg_interp.FullAggNet(64)
 
 def fitness(weights, weights_idx):
-    conv = common.evaluate_dataset(weights, train, model)
+    conv = common.evaluate_dataset(weights, train, model, alpha=args.alpha)
     return 1 - conv
 
 def display_progress(ga_instance):
     weights, fitness, _ = ga_instance.best_solution()
     gen = ga_instance.num_generation
-    test_loss = common.evaluate_dataset(weights, test, model)
+    test_loss = common.evaluate_dataset(weights, test, model, alpha=args.alpha)
 
     print(f'Generation = {gen}')
     print(f'Train Loss = {1.0 - fitness}')
@@ -66,8 +66,8 @@ if __name__ == '__main__':
     writer = tensorboard.SummaryWriter()
 
     S = common.strength_measure_funcs[args.strength_measure]
-    train_benchmark = np.average(common.evaluate_ref_conv(train, S))
-    test_benchmark = np.average(common.evaluate_ref_conv(test, S))
+    train_benchmark = np.average(common.evaluate_ref_conv(train, S, alpha=args.alpha))
+    test_benchmark = np.average(common.evaluate_ref_conv(test, S, alpha=args.alpha))
 
     try:
         os.mkdir('models_chkpt')

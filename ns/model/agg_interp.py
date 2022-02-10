@@ -117,18 +117,38 @@ class AggLayer(nn.Module):
     def __init__(self, first_layer=False, node_activation=nn.ReLU()):
         super(AggLayer, self).__init__()
 
-        self.nc1 = tg.nn.TAGConv(1 if first_layer else 2, 8, K=3)
-        self.nc2 = tg.nn.TAGConv(8, 8, K=3)
-        self.nc3 = tg.nn.TAGConv(8, 1, K=3)
+        # self.nc1 = tg.nn.TAGConv(1 if first_layer else 2, 8, K=3)
+        # self.nc2 = tg.nn.TAGConv(8, 8, K=3)
+        # self.nc3 = tg.nn.TAGConv(8, 1, K=3)
+
+        self.nc1 = tg.nn.NNConv(1 if first_layer else 2, 8, nn=nn.Sequential(
+            TensorLambda(lambda x:  x.reshape(-1, 2)),
+            nn.Linear(2, 4), nn.ReLU(),
+            nn.Linear(4, 8), nn.ReLU(),
+            nn.Linear(8, 8 * (1 if first_layer else 2)), nn.ReLU()
+        ))
+        self.nc2 = tg.nn.NNConv(8, 8, nn=nn.Sequential(
+            TensorLambda(lambda x:  x.reshape(-1, 2)),
+            nn.Linear(2, 8), nn.ReLU(),
+            nn.Linear(8, 16), nn.ReLU(),
+            nn.Linear(16, 64), nn.ReLU()
+        ))
+        self.nc3 = tg.nn.NNConv(8, 1, nn=nn.Sequential(
+            TensorLambda(lambda x:  x.reshape(-1, 2)),
+            nn.Linear(2, 2), nn.ReLU(),
+            nn.Linear(2, 4), nn.ReLU(),
+            nn.Linear(4, 8), nn.ReLU()
+        ))
+
         self.norm = tg.nn.InstanceNorm(1)
 
     def forward(self, x, edge_index, edge_attr, k):
         if len(x.shape) == 1:
             x = torch.unsqueeze(x, 1)
 
-        x = nnF.relu(self.nc1(x, edge_index, abs(edge_attr)))
-        x = nnF.relu(self.nc2(x, edge_index, abs(edge_attr)))
-        x = nnF.relu(self.nc3(x, edge_index, abs(edge_attr)))
+        x = nnF.relu(self.nc1(x, edge_index, edge_attr))
+        x = nnF.relu(self.nc2(x, edge_index, edge_attr))
+        x = nnF.relu(self.nc3(x, edge_index, edge_attr))
         x = self.norm(x).squeeze()
 
         top_k = torch.argsort(x, descending=True)[:k]
@@ -175,7 +195,7 @@ class FullAggNet(nn.Module):
         super(FullAggNet, self).__init__()
 
         self.PNet = MPNN(dim, num_internal_conv=4, input_edge_features=2)
-        self.AggNet = AggNet(iterations=4)
+        self.AggNet = AggNet(iterations=6)
         self.CNet = MPNN(dim, num_internal_conv=5)
 
     def forward(self, A, alpha):
@@ -205,15 +225,18 @@ class FullAggNet(nn.Module):
 
         m, n = A.shape
         k = int(np.ceil(alpha * m))
-
-        # Compute node scores
         data_simple = ns.model.data.graph_from_matrix_basic(A)
-        node_scores = self.AggNet(data_simple, k)
-        node_scores = node_scores.squeeze()
-
+        
         # Use the network to output Bellman-ford weights
         BF_nodes, BF_edges = self.CNet(data_simple)
         BF_weights = torch.sparse_coo_tensor(data_simple.edge_index, BF_edges.squeeze(), (m, n)).coalesce()
+
+        data_node_score = tg.data.Data(x=data_simple.x, edge_index=data_simple.edge_index, edge_attr=torch.column_stack((data_simple.edge_attr, BF_edges.squeeze())))
+        
+        # Compute node scores
+        # node_scores = self.AggNet(data_simple, k)
+        node_scores = self.AggNet(data_node_score, k)
+        node_scores = node_scores.squeeze()
 
         # Find cluster centers
         top_k = torch.argsort(node_scores, descending=True)[:k]

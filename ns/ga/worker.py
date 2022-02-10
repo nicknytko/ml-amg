@@ -215,15 +215,18 @@ def worker_mutation(random, pipe, cmd):
     perturb_min, perturb_max = cmd['mutation_perturb']
     C = population.shape[1]
 
-    for i in range(population.shape[0]):
-        p = random.rand()
-        if p <= mutation_probability:
-            population[i] += (random.rand(C) * (perturb_max - perturb_min)) + perturb_min
-            mutated[i] = True
-
+    # Have at least one mutation.  Numpy doesn't like when we send back an empty array.
+    while not np.any(mutated):
+        for i in range(population.shape[0]):
+            p = random.rand()
+            if p <= mutation_probability:
+                population[i] += (random.rand(C) * (perturb_max - perturb_min)) + perturb_min
+                mutated[i] = True
+            
     # Only send back parts of the population we have mutated
     indices = indices[mutated]
     population = population[mutated]
+    
     pipe.send(WorkerCommand.create(WorkerCommand.FITNESS,
                                    indices=indices,
                                    population=population))

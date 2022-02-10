@@ -64,44 +64,30 @@ else:
 
 np.random.seed()
 
-device = 'cpu'
-
-A_T = ns.lib.sparse.to_torch_sparse(A).to(device)
-
-def plot_grid(agg, P, bf_weights, cluster_centers, node_scores):
-    graph = grid.networkx
-    graph.remove_edges_from(list(nx.selfloop_edges(graph)))
-    positions = {}
-    for node in graph.nodes:
-        positions[node] = grid.x[node]
-
-    edge_values = np.zeros(len(graph.edges))
-    for i, edge in enumerate(graph.edges):
-        edge_values[i] = bf_weights[edge]
-
-    if isinstance(node_scores, torch.Tensor):
-        node_scores = node_scores.numpy()
-    node_scores = np.log10(node_scores + 1)
-
-    if not isinstance(P, sp.spmatrix):
-        P = ns.lib.sparse_tensor.to_scipy(P)
-
-    grid.plot_agg(agg, alpha=0.1, edgecolor='0.2')
-    if args.spiderplot:
-        grid.plot_spider_agg(agg, P)
-    nx.drawing.nx_pylab.draw_networkx(graph, ax=plt.gca(), pos=positions, arrows=False, with_labels=False, node_size=50, edge_color=edge_values, node_color=node_scores)
-    plt.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'r*', markersize=6)
-    plt.gca().set_aspect('equal')
-
 model = ns.model.agg_interp.FullAggNet(64)
 model.load_state_dict(torch.load(args.model))
 model.eval()
 
-# agg_T, P, bf_weights, cluster_centers, node_scores = compute_agg_and_p(model)
-# plt.figure(figsize=figure_size)
-# plot_grid(ns.lib.sparse_tensor.to_scipy(agg_T), P, bf_weights, cluster_centers, node_scores)
-
 data_simple = ns.model.data.graph_from_matrix_basic(A)
-intermediate = model.AggNet.all_intermediate_topk(data_simple, int(np.ceil(alpha * A.shape[0])))
+with torch.no_grad():
+    intermediate = model.AggNet.all_intermediate_topk(data_simple, int(np.ceil(alpha * A.shape[0])))
 
-print(intermediate)
+graph = grid.networkx
+graph.remove_edges_from(list(nx.selfloop_edges(graph)))
+
+positions = {}
+for node in graph.nodes:
+    positions[node] = grid.x[node]
+
+fig, axes = plt.subplots(1, len(intermediate), figsize=(15,4))
+plt.title('Values of aggregate centers vs binarization pass')
+
+for i in range(len(intermediate)):
+    ax = axes[i]
+    cluster_centers = (intermediate[i] == 1.0)
+    nx.drawing.nx_pylab.draw_networkx(graph, ax=ax, pos=positions, arrows=False, with_labels=False, node_size=20)
+    ax.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'k*', markersize=6)
+    ax.set_aspect('equal')
+    ax.set_title(f'Pass {i+1}')
+
+plt.show(block=True)
