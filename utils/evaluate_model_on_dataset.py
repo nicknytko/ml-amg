@@ -22,6 +22,8 @@ import ns.lib.sparse
 import ns.lib.sparse_tensor
 import ns.lib.multigrid
 
+import common
+
 def parse_bool_str(v):
     v = v.lower()
     if v == 't' or v == 'true':
@@ -55,7 +57,8 @@ def evaluate_dataset(dataset, use_model=True):
                 agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
             P = ns.lib.sparse_tensor.to_scipy(P_T)
         else:
-            Agg, _ = pyamg.aggregation.lloyd_aggregation(A, ratio=alpha)
+            C = common.strength_measure_funcs['invev'](A)
+            Agg, _ = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
             P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, Agg)
         b = np.zeros(A.shape[1])
 
@@ -88,9 +91,13 @@ print(f'done in {time.time() - start:.3f} seconds')
 baseline_avg = np.average(baseline)
 ml_avg = np.average(ml)
 
+if 'train' in args.system:
+    prefix = 'train'
+else:
+    prefix = 'test'
+
 plt.figure(figsize=(8,8))
 plt.title('ML vs Lloyd Convergence Analysis')
-# plt.plot(baseline, ml, 'o', markersize=5, alpha=0.7, label='Convergence')
 plt.scatter(baseline, ml, s=np.array(ds_size)**0.8, alpha=0.7, label='Convergence')
 plt.plot([0, 1], [0, 1], 'tab:orange', label='Diagonal')
 plt.plot([0, 1], [ml_avg, ml_avg], 'tab:green', label='ML Average')
@@ -102,6 +109,7 @@ plt.ylabel('ML Convergence')
 plt.axis('equal')
 plt.grid()
 plt.legend()
+plt.savefig(f'{prefix}_convergence.pdf')
 
 plt.figure(figsize=(8,8))
 plt.title('Convergence of Lloyd and ML vs Problem Size')
@@ -111,7 +119,7 @@ plt.xlabel('Problem Size (DOF)')
 plt.ylabel('Convergence Rate')
 plt.grid()
 plt.legend()
-plt.show()
+plt.savefig(f'{prefix}_convergence_per_size.pdf')
 
 plt.figure(figsize=(8,8))
 plt.title('Relative performance of ML to Lloyd')
@@ -120,4 +128,6 @@ plt.xlabel('Problem Size (DOF)')
 plt.ylabel('Ratio of ML to Lloyd convergence')
 plt.grid()
 plt.legend()
+plt.savefig(f'rel_perf_{prefix}.pdf')
+
 plt.show()

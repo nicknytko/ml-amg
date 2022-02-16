@@ -21,42 +21,29 @@ import ns.lib.sparse
 import ns.lib.sparse_tensor
 import ns.lib.multigrid
 
-def parse_bool_str(v):
-    v = v.lower()
-    if v == 't' or v == 'true':
-        return True
-    else:
-        return False
+import common
 
 parser = argparse.ArgumentParser(description='Demo of the trained ML-AMG network on a single example')
 parser.add_argument('system', type=str, help='Problem selection to run demo on')
 parser.add_argument('--model', type=str, help='Model file to evaluate')
 parser.add_argument('--n', type=int, default=None, help='Size of the system.  In 2d, this determines the legnth in one dimension')
 parser.add_argument('--alpha', type=float, default=None, help='Coarsening ratio for aggregation')
-parser.add_argument('--spiderplot', type=parse_bool_str, default=True, help='Enable spider plot')
-parser.add_argument('--strength-measure', default='abs', choices=['abs', 'evolution', 'invabs', 'unit', 'luke'])
+parser.add_argument('--spiderplot', type=common.parse_bool_str, default=True, help='Enable spider plot')
+parser.add_argument('--strength-measure', default='olson', choices=common.strength_measure_funcs.keys())
 args = parser.parse_args()
 
 N = args.n
 alpha = args.alpha
 neumann_solve = False
 
-strength_of_measure_funcs = {
-    'abs': lambda A: abs(A),
-    'evolution': lambda A: pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((np.ones_like(A.data), A.indices, A.indptr), A.shape) * 0.1,
-    'luke': lambda A: pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((1./np.abs(A.data), A.indices, A.indptr), A.shape),
-    'invabs': lambda A: sp.csr_matrix((1.0 / np.abs(A.data), A.indices, A.indptr), A.shape),
-    'unit': lambda A: sp.csr_matrix((np.ones_like(A.data), A.indices, A.indptr), A.shape)
-}
-
 if os.path.exists(args.system):
     if alpha is None:
-        alpha = 1. / 3.
+        alpha = .1
     grid = ns.model.data.Grid.load(args.system)
     A = grid.A
     n = A.shape[0]
     np.random.seed(0)
-    C = strength_of_measure_funcs[args.strength_measure](A)
+    C = common.strength_measure_funcs[args.strength_measure](A)
     Agg, Agg_roots = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
     figure_size = (10,10)
 else:
@@ -68,9 +55,8 @@ model = ns.model.agg_interp.FullAggNet(64)
 model.load_state_dict(torch.load(args.model))
 model.eval()
 
-data_simple = ns.model.data.graph_from_matrix_basic(A)
-with torch.no_grad():
-    intermediate = model.AggNet.all_intermediate_topk(data_simple, int(np.ceil(alpha * A.shape[0])))
+intermediate = model.forward_intermediate_topk(A, alpha)
+print(intermediate)
 
 graph = grid.networkx
 graph.remove_edges_from(list(nx.selfloop_edges(graph)))

@@ -52,6 +52,8 @@ class ParallelGA:
         self.steady_state_top_use = kwargs.get('steady_state_top_use', 1./3.)
         self.steady_state_bottom_discard = kwargs.get('steady_state_bottom_discard', 1./3.)
 
+        self.model_folds = kwargs.get('model_folds', None)
+
         # New population selection
         self.selection_to_use = kwargs.get('selection', 'steady_state')
         if not self.selection_to_use in ['steady_state', 'roulette']:
@@ -143,6 +145,7 @@ class ParallelGA:
             worker.send_command(WorkerCommand.create(WorkerCommand.CROSSOVER,
                                                      population=self.population,
                                                      fitness=self.population_fitness,
+                                                     folds=self.model_folds,
                                                      crossover_probability=self.crossover_probability,
                                                      selection_uniform_probability=True,
                                                      num_to_create=N_per_worker,

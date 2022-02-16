@@ -3,7 +3,6 @@ import numpy.linalg as la
 import pyamg
 import scipy.sparse as sp
 import sys
-import pygad
 import torch
 
 sys.path.append('../')
@@ -14,6 +13,7 @@ import ns.lib.sparse_tensor
 import ns.lib.multigrid
 import ns.lib.graph
 import ns.ga.parga
+import ns.ga.torch
 
 #### Common functions and definitions for utility scripts
 
@@ -22,7 +22,7 @@ strength_measure_funcs = {
     'evolution': lambda A: pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((np.ones_like(A.data), A.indices, A.indptr), A.shape) * 0.1,
     'invabs': lambda A: sp.csr_matrix((1.0 / np.abs(A.data), A.indices, A.indptr), A.shape),
     'unit': lambda A: sp.csr_matrix((np.ones_like(A.data), A.indices, A.indptr), A.shape),
-    'invev': lambda A: pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((1./np.abs(A.data), A.indices, A.indptr), A.shape),
+    'olson': lambda A: pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((1./np.abs(A.data), A.indices, A.indptr), A.shape),
 }
 
 def parse_bool_str(v):
@@ -34,7 +34,7 @@ def parse_bool_str(v):
 
 def evaluate_dataset(weights, dataset, model=None, S=None, neumann_solve=False, alpha=0.3, omega=2./3.):
     if model is not None:
-        model.load_state_dict(pygad.torchga.model_weights_as_dict(model, weights))
+        model.load_state_dict(ns.ga.torch.model_weights_as_dict(model, weights))
         model.eval()
 
     conv = np.zeros(len(dataset))

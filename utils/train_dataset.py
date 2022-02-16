@@ -11,8 +11,6 @@ import sys
 import os
 import pyamg
 import matplotlib.pyplot as plt
-import pygad
-import pygad.torchga
 import argparse
 import networkx as nx
 
@@ -24,6 +22,7 @@ import ns.lib.sparse_tensor
 import ns.lib.multigrid
 import ns.lib.graph
 import ns.ga.parga
+import ns.ga.torch
 
 import common
 
@@ -40,7 +39,14 @@ args = parser.parse_args()
 
 train = ns.model.data.Grid.load_dir(os.path.join(args.system, 'train'))[::8]
 test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[::8]
-model = ns.model.agg_interp.FullAggNet(64)
+model = ns.model.agg_interp.FullAggNet(16)
+model_folds = [
+    "PNet",
+    "AggNet.layers.0",
+    "AggNet.layers.1",
+    "AggNet.feature_map",
+    "CNet"
+]
 
 def fitness(weights, weights_idx):
     conv = common.evaluate_dataset(weights, train, model, alpha=args.alpha)
@@ -58,7 +64,7 @@ def display_progress(ga_instance):
     writer.add_scalars('Loss/Train', {'ML': 1 - fitness, 'Lloyd/SA': train_benchmark}, gen)
     writer.add_scalars('Loss/Test', {'ML': test_loss, 'Lloyd/SA': test_benchmark}, gen)
 
-    model.load_state_dict(pygad.torchga.model_weights_as_dict(model, weights))
+    model.load_state_dict(ns.ga.torch.model_weights_as_dict(model, weights))
     model.eval()
     torch.save(model.state_dict(), f'models_chkpt/model_{gen:03}')
 
@@ -77,16 +83,20 @@ if __name__ == '__main__':
     if args.start_model is not None:
         model.load_state_dict(torch.load(args.start_model))
         model.eval()
-    initial_population = np.array(pygad.torchga.TorchGA(model=model, num_solutions=args.initial_population_size).population_weights)
+    population = ns.ga.torch.TorchGA(model=model, num_solutions=args.initial_population_size, model_fold_names=model_folds)
+    initial_population = population.population_weights
+
+    perturb_val = 1.
     ga_instance = ns.ga.parga.ParallelGA(initial_population=initial_population,
                                          fitness_func=fitness,
                                          crossover_probability=0.5,
                                          mutation_probability=0.4,
-                                         mutation_min_perturb=-3.,
-                                         mutation_max_perturb=3.,
+                                         mutation_min_perturb=-perturb_val,
+                                         mutation_max_perturb=perturb_val,
                                          steady_state_top_use=2./3.,
                                          steady_state_bottom_discard=1./4.,
-                                         num_workers=args.workers)
+                                         num_workers=args.workers,
+                                         model_folds=population.folds)
     ga_instance.num_generation = args.start_generation
     ga_instance.start_workers()
     display_progress(ga_instance)

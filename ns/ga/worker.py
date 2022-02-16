@@ -177,6 +177,8 @@ def worker_crossover(random, pipe, cmd):
     pairs_computed_fitness = np.zeros(n_pairs * 2, dtype=bool)
     pairs_fitness = np.zeros(n_pairs * 2)
 
+    folds = cmd['folds']
+
     for i in range(0, n_pairs, 2):
         # draw two parents
         parent_one_idx, parent_two_idx = random.choice(population_to_use, size=2, replace=False, p=probability)
@@ -184,14 +186,22 @@ def worker_crossover(random, pipe, cmd):
         # now, with probability p do some sort of crossover, otherwise use the parents directly
         p = random.rand()
         if p <= crossover_probability:
-            crossover_pt = random.randint(0, population.shape[1])
+            if folds is None:
+                crossover_pt = random.randint(0, population.shape[1])
 
-            # single point crossover
-            pairs[i, :crossover_pt] = population[parent_one_idx, :crossover_pt]
-            pairs[i, crossover_pt:] = population[parent_two_idx, crossover_pt:]
+                # single point crossover
+                pairs[i, :crossover_pt] = population[parent_one_idx, :crossover_pt]
+                pairs[i, crossover_pt:] = population[parent_two_idx, crossover_pt:]
 
-            pairs[i+1, crossover_pt:] = population[parent_one_idx, crossover_pt:]
-            pairs[i+1, :crossover_pt] = population[parent_two_idx, :crossover_pt]
+                pairs[i+1, crossover_pt:] = population[parent_one_idx, crossover_pt:]
+                pairs[i+1, :crossover_pt] = population[parent_two_idx, :crossover_pt]
+            else:
+                # Fold-based crossover
+                for fold in folds:
+                    a, b = random.choice([i, i+1], size=2, replace=False)
+                    for rng in fold.ranges:
+                        pairs[a, rng.low:rng.high] = population[parent_one_idx, rng.low:rng.high]
+                        pairs[b, rng.low:rng.high] = population[parent_two_idx, rng.low:rng.high]
         else:
             pairs[i] = population[parent_one_idx]
             pairs_fitness[i] = fitness[parent_one_idx]
@@ -222,11 +232,11 @@ def worker_mutation(random, pipe, cmd):
             if p <= mutation_probability:
                 population[i] += (random.rand(C) * (perturb_max - perturb_min)) + perturb_min
                 mutated[i] = True
-            
+
     # Only send back parts of the population we have mutated
     indices = indices[mutated]
     population = population[mutated]
-    
+
     pipe.send(WorkerCommand.create(WorkerCommand.FITNESS,
                                    indices=indices,
                                    population=population))

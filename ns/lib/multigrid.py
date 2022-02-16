@@ -64,50 +64,50 @@ def gauss_seidel(A, b, x, L=None, U=None, nu=2):
     '''
 
     if L is None:
-        L = sp.tril(A)
+        L = sp.tril(A).tocsr()
     if U is None:
-        U = sp.triu(A, k=1)
+        U = sp.triu(A, k=1).tocsr()
 
     for i in range(nu):
         x = spla.spsolve_triangular(L, (b - U@x))
     return x
 
-def sor(A, b, x, L=None, U=None, omega=1., nu=2):
-    '''
-    Successive over-relaxation iterative solver
+# def sor(A, b, x, L=None, U=None, omega=1., nu=2):
+#     '''
+#     Successive over-relaxation iterative solver
 
-    Parameters
-    ----------
-    A : numpy.ndarray, scipy.sparse.spmatrix
-        n x n linear system to solve
-    L : numpy.ndarray, scipy.sparse.spmatrix
-        Lower triangular half of A
-    U : numpy.ndarray, scipy.sparse.spmatrix
-        Strict upper triangular half of A
-    b : numpy.ndarray
-        Length n right hand side to solve for
-    x : numpy.ndarray
-        Length n initial guess for solution
-    omega : float
-        Relaxation weight.  Omega > 1 over-relaxes, while omega < 1 under-relaxes.
-    nu : integer
-        Number of sweeps to perform
+#     Parameters
+#     ----------
+#     A : numpy.ndarray, scipy.sparse.spmatrix
+#         n x n linear system to solve
+#     L : numpy.ndarray, scipy.sparse.spmatrix
+#         Lower triangular half of A
+#     U : numpy.ndarray, scipy.sparse.spmatrix
+#         Strict upper triangular half of A
+#     b : numpy.ndarray
+#         Length n right hand side to solve for
+#     x : numpy.ndarray
+#         Length n initial guess for solution
+#     omega : float
+#         Relaxation weight.  Omega > 1 over-relaxes, while omega < 1 under-relaxes.
+#     nu : integer
+#         Number of sweeps to perform
 
-    Returns
-    -------
-    x : numpy.ndarray
-        Length n approximation to solution
-    '''
+#     Returns
+#     -------
+#     x : numpy.ndarray
+#         Length n approximation to solution
+#     '''
 
-    if L is None:
-        L = sp.tril(A)
-    if U is None:
-        U = sp.triu(A, k=1)
+#     if L is None:
+#         L = sp.tril(A)
+#     if U is None:
+#         U = sp.triu(A, k=1)
 
-    for i in range(nu):
-        x_gs = gauss_Seidel(A, b, x, L, U, nu=1)
-        x = omega * x_gs + (1-omega) * x
-    return x
+#     for i in range(nu):
+#         x_gs = gauss_Seidel(A, b, x, L, U, nu=1)
+#         x = omega * x_gs + (1-omega) * x
+#     return x
 
 
 def smoothed_aggregation_jacobi(A, Agg):
@@ -140,8 +140,8 @@ def amg_2_v(A, P, b, x,
         rhs for linear system, should be an array of shape (n,)
     x : array
         initial guess for solution, should be an array of shape (n,)
-    jacobi_weight : float
-        value of omega for Jacobi relaxation scheme
+    jacobi_weight : (deprecated) float
+        value of omega for Jacobi relaxation scheme.  No longer necessary because we are using Gauss-Seidel.
     res_tol : None, float
         if set, will stop iteration when absolute solution residual is below this value
     error_tol : None, float
@@ -169,7 +169,8 @@ def amg_2_v(A, P, b, x,
         tol = res_tol if res_tol is not None else error_tol
 
     err = []
-    Dinv = sp.diags(1.0/A.diagonal())
+    L = sp.tril(A).tocsr()
+    U = sp.triu(A, k=1).tocsr()
     n = A.shape[0]
 
     A_H = P.T@A@P
@@ -183,7 +184,7 @@ def amg_2_v(A, P, b, x,
         x = x.copy()
 
         # Pre-relaxation
-        x = jacobi(A, b, x, Dinv, omega=jacobi_weight, nu=pre_smoothing_steps)
+        x = gauss_seidel(A, b, x, L, U, nu=pre_smoothing_steps)
         # Coarse-grid correction
         if singular:
             x += P @ spla.lsqr(P.T@A@P, P.T@(b - A@x))[0]
@@ -191,7 +192,7 @@ def amg_2_v(A, P, b, x,
             x += P @ A_H_LU(P.T@(b - A@x))
 
         # Post-relaxation
-        x = jacobi(A, b, x, Dinv, omega=jacobi_weight, nu=post_smoothing_steps)
+        x = gauss_seidel(A, b, x, L, U, nu=post_smoothing_steps)
         # Normalize with zero mean for singular systems w/ constant nullspace
         if singular:
             x -= np.mean(x)
