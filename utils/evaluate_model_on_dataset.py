@@ -57,7 +57,7 @@ def evaluate_dataset(dataset, use_model=True):
                 agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
             P = ns.lib.sparse_tensor.to_scipy(P_T)
         else:
-            C = common.strength_measure_funcs['invev'](A)
+            C = common.strength_measure_funcs['olson'](A)
             Agg, _ = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
             P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, Agg)
         b = np.zeros(A.shape[1])
@@ -74,7 +74,7 @@ def evaluate_dataset(dataset, use_model=True):
             conv[i] = res
     return conv
 
-model = ns.model.agg_interp.FullAggNet(64)
+model = ns.model.agg_interp.AggOnlyNet(64)
 model.load_state_dict(torch.load(args.model))
 model.eval()
 

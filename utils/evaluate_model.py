@@ -138,8 +138,9 @@ A_Graph = ns.model.data.graph_from_matrix_basic(A)
 def compute_agg_and_p(model):
     C = common.strength_measure_funcs[args.strength_measure](A)
     with torch.no_grad():
-        agg_T, P, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
-        agg_sp = ns.lib.sparse_tensor.to_scipy(agg_T)
+        agg, P, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
+        #agg_sp = ns.lib.sparse_tensor.to_scipy(agg_T)
+        agg_T = ns.lib.sparse.scipy_to_torch(agg)
 
     return agg_T, P, bf_weights, cluster_centers, node_scores
 
@@ -180,8 +181,9 @@ def plot_grid(agg, P, bf_weights, cluster_centers, node_scores):
 plt.figure(figsize=figure_size)
 plot_grid(Agg, P_SA, C, Agg_roots, torch.zeros(A.shape[0]))
 plt.title(f'Baseline Lloyd + Jacobi, conv={loss_fcn(A, ns.lib.sparse.to_torch_sparse(P_SA)):.4f}')
+plt.savefig('lloyd.pdf')
 
-model = ns.model.agg_interp.FullAggNet(64)
+model = ns.model.agg_interp.AggOnlyNet(64)
 model.load_state_dict(torch.load(args.model))
 model.eval()
 
@@ -216,5 +218,6 @@ if 'theta' in grid.extra and 'epsilon' in grid.extra:
 else:
     plot_title = f'ML AMG, conv={conv:.4f}'
     plt.title(plot_title)
+plt.savefig('ml.pdf')
 plt.show()
 print('Convergence', conv)

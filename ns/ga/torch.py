@@ -97,7 +97,6 @@ class TorchGA:
             self.fold_names = model_fold_names.copy()
 
         weights, self.folds = model_weights_as_vector(model=self.model, folds=self.fold_names)
-        print(self.fold_names, self.folds)
 
         net_population_weights = []
         net_population_weights.append(weights)

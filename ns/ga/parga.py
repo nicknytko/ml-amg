@@ -84,6 +84,7 @@ class ParallelGA:
             local_population = self.population[local_indices]
             if len(local_indices) != 0:
                 worker.send_command(WorkerCommand.create(WorkerCommand.FITNESS,
+                                                         generation=self.num_generation,
                                                          population=local_population,
                                                          indices=local_indices,
                                                          fitness_func=self.fitness_func))
@@ -208,6 +209,28 @@ class ParallelGA:
         worst = np.argmin(self.population_fitness)
         self.population[worst] = best
         self.population_fitness[worst] = fitness
+
+
+    def stochastic_iteration(self):
+        self.num_generation += 1
+        # Recompute every network in population, so that local fitness
+        # is relative to computed minibatch
+        self.population_computed_fitness[:] = False
+        self.compute_fitness()
+        # print(f'{self.num_generation}, start fitness: {1-self.population_fitness}')
+
+        best, fitness, _ = self.best_solution()
+
+        self.selection_method()
+        self.mutation()
+        self.compute_fitness()
+
+        # Replace worst with previous best
+        worst = np.argmin(self.population_fitness)
+        self.population[worst] = best
+        self.population_fitness[worst] = fitness
+
+        # print(f'{self.num_generation}, end fitness: {1-self.population_fitness}')
 
 
     def best_solution(self):

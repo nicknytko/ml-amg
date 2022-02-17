@@ -7,6 +7,7 @@ import scipy.sparse as sp
 import ns.lib.sparse as sparse
 import ns.model.data
 import ns.lib.graph
+import pyamg
 
 
 class TensorLambda(nn.Module):
@@ -234,8 +235,40 @@ class AggOnlyNet(nn.Module):
         m, n = A.shape
         k = int(np.ceil(alpha * m))
         data_simple = ns.model.data.graph_from_matrix_basic(A)
+        C = pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((1./np.abs(A.data), A.indices, A.indptr), A.shape)
+        C_T = ns.lib.sparse.to_torch_sparse(C).coalesce()
 
-        data_node_score = tg.data.Data(x=data_simple.x, edge_index=data_simple.edge_index, edge_attr=torch.column_stack((data_simple.edge_attr, BF_edges.squeeze())))
+        data_node_score = tg.data.Data(x=data_simple.x, edge_index=data_simple.edge_index, edge_attr=torch.column_stack((data_simple.edge_attr, C_T.values().squeeze())))
+
+        # Compute node scores
+        node_scores = self.AggNet(data_node_score, k)
+        node_scores = node_scores.squeeze()
+
+        # Find cluster centers
+        top_k = torch.argsort(node_scores, descending=True)[:k]
+
+        # Run Bellman-Ford to assign each node to an aggregate
+        distance, nearest_center = ns.lib.graph.modified_bellman_ford(C_T, top_k)
+        agg_T = ns.lib.graph.nearest_center_to_agg(top_k, nearest_center)
+        agg = ns.lib.sparse_tensor.to_scipy(agg_T)
+
+        # Compute final interpolation through smoothed aggregation
+        P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, agg)
+        P_T = ns.lib.sparse.scipy_to_torch(P)
+
+        return agg, P_T, C, top_k, node_scores
+
+    def forward_intermediate_topk(self, A, alpha):
+        m, n = A.shape
+        k = int(np.ceil(alpha * m))
+        data_simple = ns.model.data.graph_from_matrix_basic(A)
+
+        C = pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((1./np.abs(A.data), A.indices, A.indptr), A.shape)
+        C_T = ns.lib.sparse.to_torch_sparse(C).coalesce()
+
+        data_node_score = tg.data.Data(x=data_simple.x, edge_index=data_simple.edge_index, edge_attr=torch.column_stack((data_simple.edge_attr, C_T.values().squeeze())))
+
+        return self.AggNet.all_intermediate_topk(data_node_score, k)
 
 
 class FullAggNet(nn.Module):

@@ -51,7 +51,7 @@ else:
 
 np.random.seed()
 
-model = ns.model.agg_interp.FullAggNet(64)
+model = ns.model.agg_interp.AggOnlyNet(64)
 model.load_state_dict(torch.load(args.model))
 model.eval()
 

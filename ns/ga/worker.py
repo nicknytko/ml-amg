@@ -141,10 +141,11 @@ def worker_fitness(random, pipe, cmd):
     population = cmd['population']
     indices = cmd['indices']
     fitness_func = cmd['fitness_func']
+    generation = cmd['generation']
     computed_fitness = np.zeros_like(indices, dtype=np.float64)
 
     for i, idx in enumerate(indices):
-        computed_fitness[i] = fitness_func(population[i], idx)
+        computed_fitness[i] = fitness_func(generation, population[i], idx)
 
     pipe.send(WorkerCommand.create(WorkerCommand.FITNESS,
                                    indices=indices,

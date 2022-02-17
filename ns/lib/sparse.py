@@ -2,6 +2,7 @@ import torch
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 import numpy as np
+import ns.lib.sparse_tensor
 
 def col_normalize_csr(A_sp, ord=1):
     '''
@@ -23,3 +24,6 @@ def to_torch_sparse(A):
     )
     A_T = A_T.coalesce()
     return A_T
+
+scipy_to_torch = to_torch_sparse
+torch_to_scipy = ns.lib.sparse_tensor.to_scipy

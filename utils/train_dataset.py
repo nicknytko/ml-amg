@@ -37,25 +37,32 @@ parser.add_argument('--start-model', type=str, default=None, help='Initial gener
 parser.add_argument('--strength-measure', default='abs', choices=common.strength_measure_funcs.keys())
 args = parser.parse_args()
 
-train = ns.model.data.Grid.load_dir(os.path.join(args.system, 'train'))[::8]
+train = ns.model.data.Grid.load_dir(os.path.join(args.system, 'train'))
 test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[::8]
-model = ns.model.agg_interp.FullAggNet(16)
+model = ns.model.agg_interp.AggOnlyNet(64)
 model_folds = [
-    "PNet",
-    "AggNet.layers.0",
-    "AggNet.layers.1",
-    "AggNet.feature_map",
-    "CNet"
+    'AggNet.layers.0',
+    'AggNet.layers.1',
+    # 'AggNet.layers.2',
+    # 'AggNet.layers.3',
+    'AggNet.feature_map'
 ]
 
-def fitness(weights, weights_idx):
-    conv = common.evaluate_dataset(weights, train, model, alpha=args.alpha)
+minibatch_size = 16
+
+def fitness(generation, weights, weights_idx):
+    r = np.random.RandomState(seed=generation)
+    batch_indices = r.choice(len(train), size=minibatch_size, replace=False)
+    batch = [train[i] for i in batch_indices]
+
+    conv = common.evaluate_dataset(weights, batch, model, alpha=args.alpha)
     return 1 - conv
 
 def display_progress(ga_instance):
     weights, fitness, _ = ga_instance.best_solution()
     gen = ga_instance.num_generation
     test_loss = common.evaluate_dataset(weights, test, model, alpha=args.alpha)
+    #test_loss = 0.55
 
     print(f'Generation = {gen}')
     print(f'Train Loss = {1.0 - fitness}')
@@ -86,7 +93,7 @@ if __name__ == '__main__':
     population = ns.ga.torch.TorchGA(model=model, num_solutions=args.initial_population_size, model_fold_names=model_folds)
     initial_population = population.population_weights
 
-    perturb_val = 1.
+    perturb_val = 1e-2
     ga_instance = ns.ga.parga.ParallelGA(initial_population=initial_population,
                                          fitness_func=fitness,
                                          crossover_probability=0.5,
@@ -102,7 +109,7 @@ if __name__ == '__main__':
     display_progress(ga_instance)
 
     for i in range(args.max_generations):
-        ga_instance.iteration()
+        ga_instance.stochastic_iteration()
         display_progress(ga_instance)
 
     ga_instance.finish_workers()
