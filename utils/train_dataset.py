@@ -37,32 +37,41 @@ parser.add_argument('--start-model', type=str, default=None, help='Initial gener
 parser.add_argument('--strength-measure', default='abs', choices=common.strength_measure_funcs.keys())
 args = parser.parse_args()
 
-train = ns.model.data.Grid.load_dir(os.path.join(args.system, 'train'))
-test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[::8]
+# train = ns.model.data.Grid.load_dir(os.path.join(args.system, 'train'))[::8]
+# test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[::8]
+train = ns.model.data.Grid.load_dir(os.path.join(args.system, 'train'))[::64]
+test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[:5]
 model = ns.model.agg_interp.AggOnlyNet(64)
 model_folds = [
     'AggNet.layers.0',
     'AggNet.layers.1',
-    # 'AggNet.layers.2',
-    # 'AggNet.layers.3',
-    'AggNet.feature_map'
+    'AggNet.layers.2',
+    'AggNet.layers.3',
+    # 'AggNet.layers.4',
+    # 'AggNet.layers.5',
+    # 'AggNet.layers.6',
+    # 'AggNet.layers.7',
+    # 'AggNet.feature_map'
 ]
 
-minibatch_size = 16
+print(len(train), len(test))
+
+# minibatch_size = 16
 
 def fitness(generation, weights, weights_idx):
-    r = np.random.RandomState(seed=generation)
-    batch_indices = r.choice(len(train), size=minibatch_size, replace=False)
-    batch = [train[i] for i in batch_indices]
+    # r = np.random.RandomState(seed=generation)
+    # batch_indices = r.choice(len(train), size=minibatch_size, replace=False)
+    # batch = [train[i] for i in batch_indices]
+    #batch = train[::8]
+    batch = train
 
-    conv = common.evaluate_dataset(weights, batch, model, alpha=args.alpha)
+    conv = common.evaluate_dataset(weights, batch, model, alpha=args.alpha, gen=generation)
     return 1 - conv
 
 def display_progress(ga_instance):
     weights, fitness, _ = ga_instance.best_solution()
     gen = ga_instance.num_generation
-    test_loss = common.evaluate_dataset(weights, test, model, alpha=args.alpha)
-    #test_loss = 0.55
+    test_loss = common.evaluate_dataset(weights, test, model, alpha=args.alpha, gen=gen)
 
     print(f'Generation = {gen}')
     print(f'Train Loss = {1.0 - fitness}')
@@ -79,8 +88,8 @@ if __name__ == '__main__':
     writer = tensorboard.SummaryWriter()
 
     S = common.strength_measure_funcs[args.strength_measure]
-    train_benchmark = np.average(common.evaluate_ref_conv(train, S, alpha=args.alpha))
-    test_benchmark = np.average(common.evaluate_ref_conv(test, S, alpha=args.alpha))
+    train_benchmark = np.average(common.evaluate_ref_conv(train, S, alpha=args.alpha)); print(f'Evaluated train benchmark ({train_benchmark:.4f})')
+    test_benchmark = np.average(common.evaluate_ref_conv(test, S, alpha=args.alpha)); print(f'Evaluated test benchmark ({test_benchmark:.4f})')
 
     try:
         os.mkdir('models_chkpt')
@@ -93,7 +102,7 @@ if __name__ == '__main__':
     population = ns.ga.torch.TorchGA(model=model, num_solutions=args.initial_population_size, model_fold_names=model_folds)
     initial_population = population.population_weights
 
-    perturb_val = 1e-2
+    perturb_val = 5.
     ga_instance = ns.ga.parga.ParallelGA(initial_population=initial_population,
                                          fitness_func=fitness,
                                          crossover_probability=0.5,
@@ -109,7 +118,7 @@ if __name__ == '__main__':
     display_progress(ga_instance)
 
     for i in range(args.max_generations):
-        ga_instance.stochastic_iteration()
+        ga_instance.iteration()
         display_progress(ga_instance)
 
     ga_instance.finish_workers()

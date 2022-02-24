@@ -45,6 +45,11 @@ def graph_from_matrix_basic(A):
     nx_data = tg.utils.from_networkx(G, None, ['weight'])
     return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=abs(nx_data.edge_attr.float()))
 
+def graph_from_matrix_node_vals(A, x):
+    G = nx.from_scipy_sparse_matrix(A, edge_attribute='weight', parallel_edges=False, create_using=nx.DiGraph)
+    nx_data = tg.utils.from_networkx(G, None, ['weight'])
+    return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=abs(nx_data.edge_attr.float()))
+
 class Grid():
     def __init__(self, A_csr, x=None, extra={}):
         '''
@@ -189,7 +194,7 @@ class Grid():
     def save(self, fname):
         if not '.grid' in fname:
             fname = fname + '.grid'
-            
+
         ns.lib.helpers.pickle_save_bz2(fname, {
             'A': self.A,
             'x': self.x,
@@ -314,7 +319,7 @@ class Grid():
             'epsilon': epsilon,
             'theta': theta
         })
-    
+
     def structured_2d_poisson_dirichlet(n_pts_x, n_pts_y,
                                         xdim=(0,1), ydim=(0,1),
                                         epsilon=1.0, theta=0.0):

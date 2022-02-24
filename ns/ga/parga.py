@@ -217,7 +217,6 @@ class ParallelGA:
         # is relative to computed minibatch
         self.population_computed_fitness[:] = False
         self.compute_fitness()
-        # print(f'{self.num_generation}, start fitness: {1-self.population_fitness}')
 
         best, fitness, _ = self.best_solution()
 
@@ -229,8 +228,6 @@ class ParallelGA:
         worst = np.argmin(self.population_fitness)
         self.population[worst] = best
         self.population_fitness[worst] = fitness
-
-        # print(f'{self.num_generation}, end fitness: {1-self.population_fitness}')
 
 
     def best_solution(self):

@@ -126,23 +126,33 @@ class MPNN(nn.Module):
 
 
 class AggLayer(nn.Module):
-    def __init__(self, dim, first_layer=False, num_internal_conv=5):
+    def __init__(self, dim, num_conv=6):
         super(AggLayer, self).__init__()
-        self.in_size = 1 if first_layer else 2
+        ncs = []
+        fcs = []
+        norms = []
 
         # Input -> Hidden
-        self.nc_in = tg.nn.NNConv(self.in_size, dim, nn=nn.Sequential(
-            TensorLambda(lambda x:  x.reshape(-1, 2)),
-            nn.Linear(2, 4), nn.ReLU(),
-            nn.Linear(4, 16), nn.ReLU(),
-            nn.Linear(16, dim * self.in_size), nn.ReLU()
-        ))
-        self.norm_in = tg.nn.InstanceNorm(8)
+        ncs.append(
+            tg.nn.NNConv(1, dim, nn=nn.Sequential(
+                TensorLambda(lambda x:  x.reshape(-1, 2)),
+                nn.Linear(2, 4), nn.ReLU(),
+                nn.Linear(4, 16), nn.ReLU(),
+                nn.Linear(16, dim), nn.ReLU()
+            ))
+        )
+        fcs.append(
+            nn.Sequential(
+                nn.Linear(dim, dim), nn.ReLU(),
+                nn.Linear(dim, dim), nn.ReLU(),
+                nn.Linear(dim, dim), nn.ReLU(),
+                nn.Linear(dim, dim), nn.ReLU()
+            )
+        )
+        norms.append(tg.nn.norm.InstanceNorm(dim))
 
-        # Create hidden layers
-        ncs = []
-        norms = []
-        for i in range(num_internal_conv):
+        # Hidden -> Hidden
+        for i in range(num_conv-2):
             ncs.append(
                 tg.nn.NNConv(dim, dim, nn=nn.Sequential(
                     TensorLambda(lambda x:  x.reshape(-1, 2)),
@@ -151,101 +161,112 @@ class AggLayer(nn.Module):
                     nn.Linear(16, dim * dim), nn.ReLU()
                 ))
             )
-            norms.append(tg.nn.norm.InstanceNorm(8))
-        self.ncs = nn.ModuleList(ncs)
-        self.norms = nn.ModuleList(norms)
-        self.num_internal_conv = num_internal_conv
+            fcs.append(
+                nn.Sequential(
+                    nn.Linear(dim, dim), nn.ReLU(),
+                    nn.Linear(dim, dim), nn.ReLU(),
+                    nn.Linear(dim, dim), nn.ReLU(),
+                    nn.Linear(dim, dim), nn.ReLU()
+                )
+            )
+            norms.append(tg.nn.norm.InstanceNorm(dim))
 
-        # Output feature map
-        self.feature_map = nn.Sequential(
-            nn.Linear(dim * (self.num_internal_conv + 1), 24), nn.ReLU(),
-            nn.Linear(24, 16), nn.ReLU(),
-            nn.Linear(16, 8), nn.ReLU(),
-            nn.Linear(8, 1), nn.ReLU()
+        # Hidden -> Output
+        ncs.append(
+            tg.nn.NNConv(dim, dim, nn=nn.Sequential(
+                TensorLambda(lambda x:  x.reshape(-1, 2)),
+                nn.Linear(2, 4), nn.ReLU(),
+                nn.Linear(4, 16), nn.ReLU(),
+                nn.Linear(16, dim * dim), nn.ReLU()
+            ))
         )
+        fcs.append(
+            nn.Sequential(
+                nn.Linear(dim, dim), nn.ReLU(),
+                nn.Linear(dim, dim), nn.ReLU(),
+                nn.Linear(dim, dim), nn.ReLU(),
+                nn.Linear(dim, 1), nn.ReLU()
+            )
+        )
+        norms.append(tg.nn.norm.InstanceNorm(1))
 
+        self.ncs = nn.ModuleList(ncs)
+        self.fcs = nn.ModuleList(fcs)
+        self.norms = nn.ModuleList(norms)
+        self.num_conv = num_conv
         self.dim = dim
+
 
     def forward(self, x, edge_index, edge_attr, k):
         if len(x.shape) == 1:
             x = torch.unsqueeze(x, 1)
         n = x.shape[0]
 
-        x_f = torch.zeros((n, self.dim * (self.num_internal_conv + 1)))
-        x = self.norm_in(nnF.relu(self.nc_in(x, edge_index, edge_attr)))
-        x_f[:, :self.dim] = x
-
-        for i in range(self.num_internal_conv):
+        for i in range(self.num_conv):
             x = self.ncs[i](x, edge_index, edge_attr)
             x = nnF.relu(x)
+            x = self.fcs[i](x)
             x = self.norms[i](x)
-            x_f[:, (i+1)*self.dim:(i+2)*self.dim] = x
 
-        x = self.feature_map(x_f).squeeze()
         top_k_vec = topk_vec(x, k)
-
-        return torch.column_stack((x, top_k_vec))
+        return top_k_vec
 
 
 class AggNet(nn.Module):
-    def __init__(self, dim, iterations=2, num_internal_conv=6):
+    def __init__(self, dim, iterations=2, num_conv=6):
         super(AggNet, self).__init__()
         layers = []
         for i in range(iterations):
-            layers.append(AggLayer(dim, first_layer=(i == 0), num_internal_conv=num_internal_conv))
+            layers.append(AggLayer(dim, num_conv=num_conv))
+        # layers.append(AggLayer(dim, num_conv=num_conv))
         self.layers = nn.ModuleList(layers)
-        self.feature_map = nn.Sequential(
-            nn.Linear(iterations*2, 8), nn.ReLU(),
-            nn.Linear(8, 6), nn.ReLU(),
-            nn.Linear(6, 3), nn.ReLU(),
-            nn.Linear(3, 1), nn.ReLU()
-        )
+        self.num_iterations = iterations
 
     def forward(self, D, k):
         x, edge_index, edge_attr = D.x, D.edge_index, D.edge_attr
         intermediate_x = torch.zeros((len(x), 2 * len(self.layers)))
-
         for i, layer in enumerate(self.layers):
             x = layer(x, edge_index, edge_attr, k)
-            intermediate_x[:, i*2:(i+1)*2] = x
-
-        x = self.feature_map(intermediate_x)
-        return x[:,0]
+        # for i in range(self.num_iterations):
+        #     x = self.layers[0](x, edge_index, edge_attr, k)
+        return x
 
     def all_intermediate_topk(self, D, k):
         x, edge_index, edge_attr = D.x, D.edge_index, D.edge_attr
-        intermediate_x = torch.zeros((len(x), 2 * len(self.layers)))
         intermediate = []
-
         for i, layer in enumerate(self.layers):
             x = layer(x, edge_index, edge_attr, k)
-            intermediate_x[:, i*2:(i+1)*2] = x
-            intermediate.append(x[:,1])
-
-        intermediate.append(topk_vec(self.feature_map(intermediate_x), k))
+            intermediate.append(torch.clone(x))
+        # for i in range(self.num_iterations):
+        #     x = self.layers[0](x, edge_index, edge_attr, k)
+        #     intermediate.append(torch.clone(x))
         return intermediate
 
 
 class AggOnlyNet(nn.Module):
     def __init__(self, dim=64):
         super(AggOnlyNet, self).__init__()
-        self.AggNet = AggNet(dim, num_internal_conv=5, iterations=2)
+        self.AggNet = AggNet(dim, num_conv=3, iterations=4)
 
-    def forward(self, A, alpha):
+    def forward(self, A, alpha, x=None, C_in=None):
         m, n = A.shape
         k = int(np.ceil(alpha * m))
         data_simple = ns.model.data.graph_from_matrix_basic(A)
-        C = pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((1./np.abs(A.data), A.indices, A.indptr), A.shape)
+        if C_in is None:
+            C = pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((1./np.abs(A.data), A.indices, A.indptr), A.shape)
+        else:
+            C = C_in
         C_T = ns.lib.sparse.to_torch_sparse(C).coalesce()
 
-        data_node_score = tg.data.Data(x=data_simple.x, edge_index=data_simple.edge_index, edge_attr=torch.column_stack((data_simple.edge_attr, C_T.values().squeeze())))
+        data_node_score = tg.data.Data(x=(data_simple.x if x is None else torch.Tensor(x)), edge_index=data_simple.edge_index, edge_attr=torch.column_stack((data_simple.edge_attr, C_T.values().squeeze())))
 
         # Compute node scores
         node_scores = self.AggNet(data_node_score, k)
         node_scores = node_scores.squeeze()
 
         # Find cluster centers
-        top_k = torch.argsort(node_scores, descending=True)[:k]
+        top_k = torch.where(node_scores == 1)[0]
+        # top_k = torch.where(torch.Tensor(x) == 1)[0]
 
         # Run Bellman-Ford to assign each node to an aggregate
         distance, nearest_center = ns.lib.graph.modified_bellman_ford(C_T, top_k)
@@ -258,15 +279,18 @@ class AggOnlyNet(nn.Module):
 
         return agg, P_T, C, top_k, node_scores
 
-    def forward_intermediate_topk(self, A, alpha):
+    def forward_intermediate_topk(self, A, alpha, x=None, C_in=None):
         m, n = A.shape
         k = int(np.ceil(alpha * m))
         data_simple = ns.model.data.graph_from_matrix_basic(A)
 
-        C = pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((1./np.abs(A.data), A.indices, A.indptr), A.shape)
+        if C_in is None:
+            C = pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((1./np.abs(A.data), A.indices, A.indptr), A.shape)
+        else:
+            C = C_in
         C_T = ns.lib.sparse.to_torch_sparse(C).coalesce()
 
-        data_node_score = tg.data.Data(x=data_simple.x, edge_index=data_simple.edge_index, edge_attr=torch.column_stack((data_simple.edge_attr, C_T.values().squeeze())))
+        data_node_score = tg.data.Data(x=(data_simple.x if x is None else torch.Tensor(x)), edge_index=data_simple.edge_index, edge_attr=torch.column_stack((data_simple.edge_attr, C_T.values().squeeze())))
 
         return self.AggNet.all_intermediate_topk(data_node_score, k)
 

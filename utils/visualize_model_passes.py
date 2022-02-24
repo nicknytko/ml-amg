@@ -30,6 +30,7 @@ parser.add_argument('--n', type=int, default=None, help='Size of the system.  In
 parser.add_argument('--alpha', type=float, default=None, help='Coarsening ratio for aggregation')
 parser.add_argument('--spiderplot', type=common.parse_bool_str, default=True, help='Enable spider plot')
 parser.add_argument('--strength-measure', default='olson', choices=common.strength_measure_funcs.keys())
+parser.add_argument('--seed', type=int, default=None)
 args = parser.parse_args()
 
 N = args.n
@@ -55,8 +56,26 @@ model = ns.model.agg_interp.AggOnlyNet(64)
 model.load_state_dict(torch.load(args.model))
 model.eval()
 
-intermediate = model.forward_intermediate_topk(A, alpha)
-print(intermediate)
+r = np.random.RandomState(seed=args.seed)
+input_seed = np.zeros(n)
+input_seed[r.choice(n, size=int(np.ceil(alpha*n)), replace=False)] = 1.
+
+with torch.no_grad():
+    agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha, x=input_seed, C_in=C)
+    intermediate = model.forward_intermediate_topk(A, alpha, x=input_seed, C_in=C)
+
+P_ML = ns.lib.sparse.torch_to_scipy(P_T)
+P_Lloyd = ns.lib.multigrid.smoothed_aggregation_jacobi(A, Agg)
+
+b = np.zeros(n)
+x = np.random.RandomState(0).randn(n)
+x /= la.norm(x, 2)
+
+conv_ML = ns.lib.multigrid.amg_2_v(A, P_ML, b, x, res_tol=1e-6, singular=neumann_solve, jacobi_weight=2./3.)[1]
+conv_Lloyd = ns.lib.multigrid.amg_2_v(A, P_Lloyd, b, x, res_tol=1e-6, singular=neumann_solve, jacobi_weight=2./3.)[1]
+
+print('ML', conv_ML)
+print('Lloyd', conv_Lloyd)
 
 graph = grid.networkx
 graph.remove_edges_from(list(nx.selfloop_edges(graph)))
@@ -65,11 +84,18 @@ positions = {}
 for node in graph.nodes:
     positions[node] = grid.x[node]
 
-fig, axes = plt.subplots(1, len(intermediate), figsize=(15,4))
+fig, axes = plt.subplots(1, 1+len(intermediate), figsize=(15,4))
 plt.title('Values of aggregate centers vs binarization pass')
 
+ax = axes[0]
+cluster_centers_in = (input_seed == 1.0)
+nx.drawing.nx_pylab.draw_networkx(graph, ax=ax, pos=positions, arrows=False, with_labels=False, node_size=20)
+ax.plot(grid.x[cluster_centers_in, 0], grid.x[cluster_centers_in, 1], 'k*', markersize=6)
+ax.set_aspect('equal')
+ax.set_title(f'Initial Clusters')
+
 for i in range(len(intermediate)):
-    ax = axes[i]
+    ax = axes[i+1]
     cluster_centers = (intermediate[i] == 1.0)
     nx.drawing.nx_pylab.draw_networkx(graph, ax=ax, pos=positions, arrows=False, with_labels=False, node_size=20)
     ax.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'k*', markersize=6)

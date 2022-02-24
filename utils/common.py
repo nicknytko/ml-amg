@@ -32,7 +32,7 @@ def parse_bool_str(v):
     else:
         return False
 
-def evaluate_dataset(weights, dataset, model=None, S=None, neumann_solve=False, alpha=0.3, omega=2./3.):
+def evaluate_dataset(weights, dataset, model=None, S=None, neumann_solve=False, alpha=0.3, omega=2./3., gen=None):
     if model is not None:
         model.load_state_dict(ns.ga.torch.model_weights_as_dict(model, weights))
         model.eval()
@@ -40,25 +40,40 @@ def evaluate_dataset(weights, dataset, model=None, S=None, neumann_solve=False, 
     conv = np.zeros(len(dataset))
     for i in range(len(dataset)):
         A = dataset[i].A
-        if model is not None:
-            with torch.no_grad():
-                agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
-            P = ns.lib.sparse_tensor.to_scipy(P_T)
-        else:
-            if S is None:
-                C = strength_measure_funcs['abs'](A)
-            else:
-                C = S(A)
-            Agg, _ = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
-            P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, Agg)
-        b = np.zeros(A.shape[1])
+        n = A.shape[1]
+        b = np.zeros(n)
 
         np.random.seed(0)
-        x = np.random.randn(A.shape[1])
-        x /= la.norm(x, 2)
-        np.random.seed()
+        if S is None:
+            C = strength_measure_funcs['abs'](A)
+        else:
+            C = S(A)
 
-        res = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega)[1]
+        # if gen is not None:
+        #     r = np.random.RandomState(seed=gen)
+        #     x = np.zeros(n)
+        #     x[r.choice(n, size=int(np.ceil(alpha*n)), replace=False)] = 1.
+        # else:
+        #     x = np.ones(n)/n
+        # x = np.ones(n)/n
+
+        L_Agg, L_Seeds = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
+        x = np.zeros(n)
+        x[L_Seeds] = 1.
+        # x = np.ones(n)/n
+
+        if model is not None:
+            with torch.no_grad():
+                agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha, x=x, C_in=C)
+            P = ns.lib.sparse_tensor.to_scipy(P_T)
+        else:
+            # Agg, _ = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
+            P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, L_Agg)
+
+        x = np.random.RandomState(0).randn(A.shape[1])
+        x /= la.norm(x, 2)
+
+        res = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-6, singular=neumann_solve, jacobi_weight=omega)[1]
         if np.isnan(res):
             conv[i] = 0.0
         else:
@@ -69,6 +84,7 @@ def evaluate_ref_conv(dataset, strength_measure_func, neumann_solve=False, alpha
     conv = np.zeros(len(dataset))
     for i in range(len(dataset)):
         A = dataset[i].A
+        np.random.seed(0)
         C = strength_measure_func(A)
         Agg, _ = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
         P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, Agg)
