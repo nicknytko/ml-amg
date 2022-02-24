@@ -4,6 +4,8 @@ import pyamg
 import scipy.sparse as sp
 import sys
 import torch
+import warnings
+import matplotlib.pyplot as plt
 
 sys.path.append('../')
 import ns.model.agg_interp
@@ -14,6 +16,8 @@ import ns.lib.multigrid
 import ns.lib.graph
 import ns.ga.parga
 import ns.ga.torch
+
+# warnings.filterwarnings('error')
 
 #### Common functions and definitions for utility scripts
 
@@ -45,29 +49,20 @@ def evaluate_dataset(weights, dataset, model=None, S=None, neumann_solve=False, 
 
         np.random.seed(0)
         if S is None:
-            C = strength_measure_funcs['abs'](A)
+            C = strength_measure_funcs['olson'](A)
         else:
             C = S(A)
 
-        # if gen is not None:
-        #     r = np.random.RandomState(seed=gen)
-        #     x = np.zeros(n)
-        #     x[r.choice(n, size=int(np.ceil(alpha*n)), replace=False)] = 1.
-        # else:
-        #     x = np.ones(n)/n
-        # x = np.ones(n)/n
-
-        L_Agg, L_Seeds = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
-        x = np.zeros(n)
-        x[L_Seeds] = 1.
-        # x = np.ones(n)/n
+        try:
+            L_Agg, L_Seeds = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
+        except RuntimeWarning as e:
+            print(f'evaluate_dataset(): Exception on grid {i}: {e}')
 
         if model is not None:
             with torch.no_grad():
-                agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha, x=x, C_in=C)
+                agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
             P = ns.lib.sparse_tensor.to_scipy(P_T)
         else:
-            # Agg, _ = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
             P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, L_Agg)
 
         x = np.random.RandomState(0).randn(A.shape[1])
@@ -86,7 +81,14 @@ def evaluate_ref_conv(dataset, strength_measure_func, neumann_solve=False, alpha
         A = dataset[i].A
         np.random.seed(0)
         C = strength_measure_func(A)
-        Agg, _ = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
+        try:
+            Agg, _ = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
+        except Exception as e:
+            print(f'evaluate_ref_conv(): Exception on grid {i}: {e}')
+            warnings.resetwarnings()
+            dataset[i].plot()
+            plt.show(block=True)
+
         P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, Agg)
         b = np.zeros(A.shape[1])
 

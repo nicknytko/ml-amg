@@ -37,36 +37,22 @@ parser.add_argument('--start-model', type=str, default=None, help='Initial gener
 parser.add_argument('--strength-measure', default='abs', choices=common.strength_measure_funcs.keys())
 args = parser.parse_args()
 
-# train = ns.model.data.Grid.load_dir(os.path.join(args.system, 'train'))[::8]
-# test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[::8]
-train = ns.model.data.Grid.load_dir(os.path.join(args.system, 'train'))[::64]
-test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[:5]
-model = ns.model.agg_interp.AggOnlyNet(64)
+train = ns.model.data.Grid.load_dir(os.path.join(args.system, 'train'))[::8]
+test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[::8]
+print(len(train), len(test))
+
+model = ns.model.agg_interp.AggOnlyNet(80)
 model_folds = [
     'AggNet.layers.0',
     'AggNet.layers.1',
     'AggNet.layers.2',
     'AggNet.layers.3',
-    # 'AggNet.layers.4',
-    # 'AggNet.layers.5',
-    # 'AggNet.layers.6',
-    # 'AggNet.layers.7',
-    # 'AggNet.feature_map'
+    'AggNet.edge_out',
+    # 'PNet'
 ]
 
-print(len(train), len(test))
-
-# minibatch_size = 16
-
 def fitness(generation, weights, weights_idx):
-    # r = np.random.RandomState(seed=generation)
-    # batch_indices = r.choice(len(train), size=minibatch_size, replace=False)
-    # batch = [train[i] for i in batch_indices]
-    #batch = train[::8]
-    batch = train
-
-    conv = common.evaluate_dataset(weights, batch, model, alpha=args.alpha, gen=generation)
-    return 1 - conv
+    return 1 - common.evaluate_dataset(weights, train, model, alpha=args.alpha, gen=generation)
 
 def display_progress(ga_instance):
     weights, fitness, _ = ga_instance.best_solution()
