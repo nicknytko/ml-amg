@@ -52,7 +52,7 @@ else:
 
 np.random.seed()
 
-model = ns.model.agg_interp.AggOnlyNet(64)
+model = ns.model.agg_interp.AggOnlyNet(80)
 model.load_state_dict(torch.load(args.model))
 model.eval()
 
@@ -61,8 +61,8 @@ input_seed = np.zeros(n)
 input_seed[r.choice(n, size=int(np.ceil(alpha*n)), replace=False)] = 1.
 
 with torch.no_grad():
-    agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha, x=input_seed, C_in=C)
-    intermediate = model.forward_intermediate_topk(A, alpha, x=input_seed, C_in=C)
+    agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
+    intermediate = model.forward_intermediate_topk(A, alpha)
 
 P_ML = ns.lib.sparse.torch_to_scipy(P_T)
 P_Lloyd = ns.lib.multigrid.smoothed_aggregation_jacobi(A, Agg)
@@ -84,18 +84,11 @@ positions = {}
 for node in graph.nodes:
     positions[node] = grid.x[node]
 
-fig, axes = plt.subplots(1, 1+len(intermediate), figsize=(15,4))
+fig, axes = plt.subplots(1, len(intermediate), figsize=(15,4))
 plt.title('Values of aggregate centers vs binarization pass')
 
-ax = axes[0]
-cluster_centers_in = (input_seed == 1.0)
-nx.drawing.nx_pylab.draw_networkx(graph, ax=ax, pos=positions, arrows=False, with_labels=False, node_size=20)
-ax.plot(grid.x[cluster_centers_in, 0], grid.x[cluster_centers_in, 1], 'k*', markersize=6)
-ax.set_aspect('equal')
-ax.set_title(f'Initial Clusters')
-
 for i in range(len(intermediate)):
-    ax = axes[i+1]
+    ax = axes[i]
     cluster_centers = (intermediate[i] == 1.0)
     nx.drawing.nx_pylab.draw_networkx(graph, ax=ax, pos=positions, arrows=False, with_labels=False, node_size=20)
     ax.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'k*', markersize=6)

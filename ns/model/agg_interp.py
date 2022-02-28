@@ -60,6 +60,8 @@ class EdgeConvModel(nn.Module):
         super(EdgeConvModel, self).__init__()
         self.edge_mlp = nn.Sequential(nn.Linear(node_dim*2+in_edge_dim, hid_dim), nn.ReLU(),
                                       nn.LayerNorm([hid_dim]),
+                                      nn.Linear(hid_dim, hid_dim), nn.ReLU(),
+                                      nn.LayerNorm([hid_dim]),
                                       nn.Linear(hid_dim, out_edge_dim))
 
     def forward(self, x, edge_index, edge_attr):
@@ -160,10 +162,11 @@ class AggLayer(nn.Module):
                 nn.Linear(dim, dim), nn.ReLU(),
                 nn.Linear(dim, dim), nn.ReLU(),
                 nn.Linear(dim, dim), nn.ReLU(),
+                nn.Linear(dim, dim), nn.ReLU(),
                 nn.Linear(dim, dim), nn.ReLU()
             )
         )
-        norms.append(tg.nn.norm.InstanceNorm(dim))
+        norms.append(tg.nn.norm.InstanceNorm(1))
 
         # Hidden -> Hidden
         for i in range(num_conv-2):
@@ -171,6 +174,7 @@ class AggLayer(nn.Module):
             ecs.append(EdgeConvModel(dim, 1, 1, dim))
             fcs.append(
                 nn.Sequential(
+                    nn.Linear(dim, dim), nn.ReLU(),
                     nn.Linear(dim, dim), nn.ReLU(),
                     nn.Linear(dim, dim), nn.ReLU(),
                     nn.Linear(dim, dim), nn.ReLU(),
@@ -187,10 +191,11 @@ class AggLayer(nn.Module):
                 nn.Linear(dim, dim), nn.ReLU(),
                 nn.Linear(dim, dim), nn.ReLU(),
                 nn.Linear(dim, dim), nn.ReLU(),
+                nn.Linear(dim, dim), nn.ReLU(),
                 nn.Linear(dim, 1), nn.ReLU()
             )
         )
-        norms.append(tg.nn.norm.InstanceNorm(1))
+        norms.append(tg.nn.norm.InstanceNorm(dim))
 
         self.ncs = nn.ModuleList(ncs)
         self.ecs = nn.ModuleList(ecs)
@@ -206,10 +211,10 @@ class AggLayer(nn.Module):
         n = x.shape[0]
 
         for i in range(self.num_conv):
+            x = self.norms[i](x)
             x = self.ncs[i](x, edge_index, edge_attr)
             x = nnF.relu(x)
             x = self.fcs[i](x)
-            x = self.norms[i](x)
             edge_attr = nnF.relu(self.ecs[i](x, edge_index, edge_attr))
 
         top_k_vec = topk_vec(x, k)
@@ -228,10 +233,8 @@ class AggNet(nn.Module):
 
     def forward(self, D, k):
         x, edge_index, edge_attr = D.x, D.edge_index, D.edge_attr
-        intermediate_x = torch.zeros((len(x), 2 * len(self.layers)))
         for i, layer in enumerate(self.layers):
             x, edge_attr = layer(x, edge_index, edge_attr, k)
-        # edge_attr = nnF.relu(self.edge_out(x, edge_index, edge_attr))
         return x, edge_attr
 
     def all_intermediate_topk(self, D, k):
@@ -282,18 +285,11 @@ class AggOnlyNet(nn.Module):
 
         return agg, P_T, C, top_k, node_scores
 
-    def forward_intermediate_topk(self, A, alpha, x=None, C_in=None):
+    def forward_intermediate_topk(self, A, alpha):
         m, n = A.shape
         k = int(np.ceil(alpha * m))
         data_simple = ns.model.data.graph_from_matrix_basic(A)
-
-        if C_in is None:
-            C = pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((1./np.abs(A.data), A.indices, A.indptr), A.shape)
-        else:
-            C = C_in
-        C_T = ns.lib.sparse.to_torch_sparse(C).coalesce()
-
-        data_node_score = tg.data.Data(x=(data_simple.x if x is None else torch.Tensor(x)), edge_index=data_simple.edge_index, edge_attr=torch.column_stack((data_simple.edge_attr, C_T.values().squeeze())))
+        data_node_score = tg.data.Data(x=data_simple.x, edge_index=data_simple.edge_index, edge_attr=data_simple.edge_attr)
 
         return self.AggNet.all_intermediate_topk(data_node_score, k)
 

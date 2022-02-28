@@ -183,7 +183,7 @@ plot_grid(Agg, P_SA, C, Agg_roots, torch.zeros(A.shape[0]))
 plt.title(f'Baseline Lloyd + Jacobi, conv={loss_fcn(A, ns.lib.sparse.to_torch_sparse(P_SA)):.4f}')
 plt.savefig('lloyd.pdf')
 
-model = ns.model.agg_interp.AggOnlyNet(64)
+model = ns.model.agg_interp.AggOnlyNet(80)
 model.load_state_dict(torch.load(args.model))
 model.eval()
 

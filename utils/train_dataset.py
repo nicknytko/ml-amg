@@ -85,10 +85,10 @@ if __name__ == '__main__':
     if args.start_model is not None:
         model.load_state_dict(torch.load(args.start_model))
         model.eval()
-    population = ns.ga.torch.TorchGA(model=model, num_solutions=args.initial_population_size, model_fold_names=model_folds)
+    population = ns.ga.torch.TorchGA(model=model, num_solutions=args.initial_population_size)#, model_fold_names=model_folds)
     initial_population = population.population_weights
 
-    perturb_val = 5.
+    perturb_val = 5
     ga_instance = ns.ga.parga.ParallelGA(initial_population=initial_population,
                                          fitness_func=fitness,
                                          crossover_probability=0.5,
