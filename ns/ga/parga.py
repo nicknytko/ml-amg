@@ -273,6 +273,30 @@ class ParallelGA:
         return self.population[idx].copy(), self.population_fitness[idx], idx
 
 
+    def parallel_map(self, iterable, function, extra_args):
+        output = [None]*len(iterable)
+
+        for i, worker in enumerate(self.workers):
+            local_iterable = iterable[i::self.num_workers]
+            if len(local_iterable) != 0:
+                worker.send_command(WorkerCommand.create(WorkerCommand.MAP,
+                                                         iterable=local_iterable,
+                                                         function=function,
+                                                         worker_idx=i,
+                                                         args=extra_args))
+            else:
+                worker.send_command(WorkerCommand.create(WorkerCommand.NOOP))
+
+        # Now, assemble data we get back from the workers
+        data = self.workers.receive_all()
+        for datum in data:
+            if datum['command'] == WorkerCommand.NOOP:
+                continue
+            output[datum['worker_idx']::self.num_workers] = datum['output']
+
+        return output
+
+
     def start_workers(self):
         '''
         Launches all worker processes.  Should be called before iteration()

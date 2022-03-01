@@ -12,6 +12,7 @@ class WorkerCommand(enum.Enum):
     FITNESS = 3
     CROSSOVER = 4
     MUTATION = 5
+    MAP = 6
 
 
     def create(enum, **kwargs):
@@ -229,10 +230,15 @@ def worker_mutation(random, pipe, cmd):
     # Have at least one mutation.  Numpy doesn't like when we send back an empty array.
     while not np.any(mutated):
         for i in range(population.shape[0]):
-            p = random.rand()
-            if p <= mutation_probability:
-                population[i] += (random.rand(C) * (perturb_max - perturb_min)) + perturb_min
+            #p = random.rand()
+            to_mutate = random.choice([False, True], size=C, replace=True, p=[1-mutation_probability, mutation_probability])
+            if np.any(to_mutate):
+                mutations = (random.rand(np.sum(to_mutate)) * (perturb_max - perturb_min)) + perturb_min
+                population[i, to_mutate] += mutations
                 mutated[i] = True
+            # if p <= mutation_probability:
+            #     population[i] += (random.rand(C) * (perturb_max - perturb_min)) + perturb_min
+            #     mutated[i] = True
 
     # Only send back parts of the population we have mutated
     indices = indices[mutated]
@@ -241,6 +247,13 @@ def worker_mutation(random, pipe, cmd):
     pipe.send(WorkerCommand.create(WorkerCommand.FITNESS,
                                    indices=indices,
                                    population=population))
+
+
+def worker_map(random, pipe, cmd):
+    iterable = cmd['iterable']
+    f = cmd['function']
+    output = [f(i, *cmd['args']) for i in iterable]
+    pipe.send(WorkerCommand.create(WorkerCommand.MAP, output=output, worker_idx=cmd['worker_idx']))
 
 
 def worker_process(pipe):
@@ -254,6 +267,14 @@ def worker_process(pipe):
     pipe.send(WorkerCommand.create(WorkerCommand.STARTED))
     random = np.random.RandomState(seed=os.getpid())
 
+    cmds = {
+        WorkerCommand.NOOP: lambda r,p,c: p.send(WorkerCommand.create(WorkerCommand.NOOP)),
+        WorkerCommand.FITNESS: worker_fitness,
+        WorkerCommand.CROSSOVER: worker_crossover,
+        WorkerCommand.MUTATION: worker_mutation,
+        WorkerCommand.MAP: worker_map
+    }
+
     while True:
         # Poll endlessly until we are told to exit
 
@@ -262,13 +283,7 @@ def worker_process(pipe):
 
         if cmd_enum == WorkerCommand.EXIT:
             return
-        elif cmd_enum == WorkerCommand.NOOP:
-            pipe.send(WorkerCommand.create(WorkerCommand.NOOP))
-        elif cmd_enum == WorkerCommand.FITNESS:
-            worker_fitness(random, pipe, worker_cmd)
-        elif cmd_enum == WorkerCommand.CROSSOVER:
-            worker_crossover(random, pipe, worker_cmd)
-        elif cmd_enum == WorkerCommand.MUTATION:
-            worker_mutation(random, pipe, worker_cmd)
+        elif cmd_enum in cmds:
+            cmds[cmd_enum](random, pipe, worker_cmd)
         else:
             raise RuntimeError(f'Unknown command {cmd_enum}')
