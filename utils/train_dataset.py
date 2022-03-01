@@ -41,20 +41,21 @@ train = ns.model.data.Grid.load_dir(os.path.join(args.system, 'train'))[::8]
 test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[::8]
 print(len(train), len(test))
 
-model = ns.model.agg_interp.AggOnlyNet(80)
+model = ns.model.agg_interp.AggOnlyNet(32, num_conv=2, iterations=2)
 model_folds = [
     'AggNet.layers.0',
     'AggNet.layers.1',
     'AggNet.layers.2',
     'AggNet.layers.3',
     'AggNet.edge_out',
-    # 'PNet'
 ]
 
 def fitness(generation, weights, weights_idx):
     return 1 - common.evaluate_dataset(weights, train, model, alpha=args.alpha, gen=generation)
 
 def display_progress(ga_instance):
+    # global train_loss_all
+
     weights, fitness, _ = ga_instance.best_solution()
     gen = ga_instance.num_generation
     test_loss = common.evaluate_dataset(weights, test, model, alpha=args.alpha, gen=gen)
@@ -65,13 +66,34 @@ def display_progress(ga_instance):
 
     writer.add_scalars('Loss/Train', {'ML': 1 - fitness, 'Lloyd/SA': train_benchmark}, gen)
     writer.add_scalars('Loss/Test', {'ML': test_loss, 'Lloyd/SA': test_benchmark}, gen)
+    writer.add_scalar('Genetic Diversity', np.mean(np.std(ga_instance.population, axis=0)), gen)
 
     model.load_state_dict(ns.ga.torch.model_weights_as_dict(model, weights))
     model.eval()
     torch.save(model.state_dict(), f'models_chkpt/model_{gen:03}')
 
+    # plt.clf()
+    # plt.grid()
+    # plt.ylim(0,1)
+    # cur_pop_fit = np.sort(1-ga_instance.population_fitness)
+    # if train_loss_all is None:
+    #     train_loss_all = np.array([cur_pop_fit])
+    # else:
+    #     train_loss_all = np.row_stack((train_loss_all, cur_pop_fit))
+    # for i in range(ga_instance.population_size):
+    #     plt.plot(np.arange(gen+1), train_loss_all[:,i], 'o-')
+    # plt.pause(0.1)
+
+    cur_pop_fit = np.sort(1-ga_instance.population_fitness)
+    writer.add_scalars('Loss/Test/Population', {str(i): l for i, l in enumerate(cur_pop_fit)}, gen)
+
 if __name__ == '__main__':
-    writer = tensorboard.SummaryWriter()
+    writer = tensorboard.SummaryWriter('runs')
+
+    # plt.figure(figsize=(10,10))
+    # plt.ion()
+    # plt.pause(0.1)
+    # train_loss_all = None
 
     S = common.strength_measure_funcs[args.strength_measure]
     train_benchmark = np.average(common.evaluate_ref_conv(train, S, alpha=args.alpha)); print(f'Evaluated train benchmark ({train_benchmark:.4f})')
@@ -83,22 +105,27 @@ if __name__ == '__main__':
         pass
 
     if args.start_model is not None:
+        # model_to_load_from = ns.model.agg_interp.AggOnlyNet(80, num_conv=6, iterations=2)
+        # model_to_load_from.load_state_dict(torch.load(args.start_model))
+        # for i in range(model_to_load_from.AggNet.num_iterations):
+        #     model.AggNet.layers[i].load_state_dict(model_to_load_from.AggNet.layers[i].state_dict())
         model.load_state_dict(torch.load(args.start_model))
         model.eval()
     population = ns.ga.torch.TorchGA(model=model, num_solutions=args.initial_population_size)#, model_fold_names=model_folds)
     initial_population = population.population_weights
 
-    perturb_val = 5
+    perturb_val = 0.5
     ga_instance = ns.ga.parga.ParallelGA(initial_population=initial_population,
                                          fitness_func=fitness,
-                                         crossover_probability=0.5,
-                                         mutation_probability=0.4,
+                                         crossover_probability=1.0,
+                                         mutation_probability=1.0,
                                          mutation_min_perturb=-perturb_val,
                                          mutation_max_perturb=perturb_val,
                                          steady_state_top_use=2./3.,
                                          steady_state_bottom_discard=1./4.,
                                          num_workers=args.workers,
-                                         model_folds=population.folds)
+                                         model_folds=population.folds,
+                                         selection='greedy')
     ga_instance.num_generation = args.start_generation
     ga_instance.start_workers()
     display_progress(ga_instance)

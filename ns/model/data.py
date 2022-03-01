@@ -50,6 +50,18 @@ def graph_from_matrix_node_vals(A, x):
     nx_data = tg.utils.from_networkx(G, None, ['weight'])
     return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=abs(nx_data.edge_attr.float()))
 
+def graph_from_matrix_node_vals_with_inv(A, x):
+    G = nx.from_scipy_sparse_matrix(A, edge_attribute='weight', parallel_edges=False, create_using=nx.DiGraph)
+
+    invweight_dict = {} # 0 if in same cluster, 1 if not
+    for (u, v) in nx.edges(G):
+        invweight_dict = 1.0 / G.edges[u,v]['weight']
+
+    nx.set_edge_attributes(G, invweight_dict, 'invweight')
+    nx_data = tg.utils.from_networkx(G, None, ['weight', 'invweight'])
+    return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=abs(nx_data.edge_attr.float()))
+
+
 class Grid():
     def __init__(self, A_csr, x=None, extra={}):
         '''
@@ -373,7 +385,7 @@ class Grid():
         v[:,1] = (v[:,1] + ydim[0]) * (ydim[1] - ydim[0])
 
         # Discretize w/ linear finite elements
-        mesh = pyamg.gallery.fem.mesh(v, e, degree=1)
+        mesh = pyamg.gallery.fem.Mesh(v, e, degree=1)
         A, _ = pyamg.gallery.fem.gradgradform(mesh, kappa=kappa, degree=1)
         A = A.tocsr()
         A_d = R@A@R.T

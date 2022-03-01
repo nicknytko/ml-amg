@@ -36,7 +36,7 @@ parser.add_argument('--model', type=str, help='Model file to evaluate')
 parser.add_argument('--n', type=int, default=None, help='Size of the system.  In 2d, this determines the legnth in one dimension')
 parser.add_argument('--alpha', type=float, default=None, help='Coarsening ratio for aggregation')
 parser.add_argument('--spiderplot', type=parse_bool_str, default=True, help='Enable spider plot')
-parser.add_argument('--strength-measure', default='abs', choices=common.strength_measure_funcs.keys())
+parser.add_argument('--strength-measure', default='olson', choices=common.strength_measure_funcs.keys())
 args = parser.parse_args()
 
 N = args.n
@@ -183,7 +183,7 @@ plot_grid(Agg, P_SA, C, Agg_roots, torch.zeros(A.shape[0]))
 plt.title(f'Baseline Lloyd + Jacobi, conv={loss_fcn(A, ns.lib.sparse.to_torch_sparse(P_SA)):.4f}')
 plt.savefig('lloyd.pdf')
 
-model = ns.model.agg_interp.AggOnlyNet(80)
+model = ns.model.agg_interp.AggOnlyNet(32, num_conv=2, iterations=2)
 model.load_state_dict(torch.load(args.model))
 model.eval()
 

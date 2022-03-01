@@ -53,14 +53,16 @@ class ParallelGA:
         self.steady_state_bottom_discard = kwargs.get('steady_state_bottom_discard', 1./3.)
 
         self.model_folds = kwargs.get('model_folds', None)
+        self.restart_iteration = kwargs.get('restart_every', None)
 
         # New population selection
         self.selection_to_use = kwargs.get('selection', 'steady_state')
-        if not self.selection_to_use in ['steady_state', 'roulette']:
+        if not self.selection_to_use in ['steady_state', 'roulette', 'greedy']:
             raise RuntimeError(f'Unknown selection method: {self.selection_to_use}')
         self.selection_method = {
             'steady_state': self.steady_state_selection_crossover,
             'roulette': self.roulette_selection_crossover,
+            'greedy': self.greedy_selection_crossover,
         }[self.selection_to_use]
 
         self.num_generation = 0
@@ -100,6 +102,14 @@ class ParallelGA:
             local_fitness = datum['fitness']
             self.population_fitness[local_indices] = local_fitness
             self.population_computed_fitness[local_indices] = True
+
+
+    def greedy_selection_crossover(self):
+        best, fitness, _ = self.best_solution()
+
+        self.population[:] = best
+        self.population_fitness[:] = fitness
+        self.population_computed_fitness[:] = True
 
 
     def roulette_selection_crossover(self):
@@ -193,15 +203,34 @@ class ParallelGA:
             self.population_computed_fitness[local_indices] = False
 
 
+    def restart(self):
+        best, fitness, _ = self.best_solution()
+        self.population_computed_fitness[:] = False
+
+        # Copy best solution to all population, then we will mutate all but first
+        self.population[:] = best
+        self.population_computed_fitness[0] = True
+        self.population_fitness[0] = fitness
+
+        rand = np.random.RandomState()
+        self.population[1:] += rand.uniform(low=-1.0, high=1.0, size=(self.population_size-1, self.population.shape[1]))
+
+
     def iteration(self):
         '''
         Performs one iteration of the GA
         '''
 
+        if (self.restart_iteration is not None and
+            self.num_generation > 0 and
+            self.num_generation % self.restart_iteration == 0):
+            self.restart()
+
         self.num_generation += 1
         best, fitness, _ = self.best_solution()
         self.selection_method()
-        self.mutation()
+        if self.mutation_probability != 0.0:
+            self.mutation()
         self.compute_fitness()
 
         # replace worst with previous best, so we never totally remove the best solution we have

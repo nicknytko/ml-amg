@@ -59,9 +59,13 @@ def evaluate_dataset(weights, dataset, model=None, S=None, neumann_solve=False, 
             print(f'evaluate_dataset(): Exception on grid {i}: {e}')
 
         if model is not None:
-            with torch.no_grad():
-                agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
-            P = ns.lib.sparse_tensor.to_scipy(P_T)
+            try:
+                with torch.no_grad():
+                    agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
+                P = ns.lib.sparse_tensor.to_scipy(P_T)
+            except:
+                conv[i] = 1.0
+                continue
         else:
             P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, L_Agg)
 

@@ -156,7 +156,7 @@ class AggLayer(nn.Module):
 
         # Input -> Hidden
         ncs.append(tg.nn.TAGConv(1, dim))
-        ecs.append(EdgeConvModel(dim, 1, 1, dim))
+        # ecs.append(EdgeConvModel(dim, 1, 1, dim))
         fcs.append(
             nn.Sequential(
                 nn.Linear(dim, dim), nn.ReLU(),
@@ -185,7 +185,7 @@ class AggLayer(nn.Module):
 
         # Hidden -> Output
         ncs.append(tg.nn.TAGConv(dim, dim))
-        ecs.append(EdgeConvModel(1, 1, 1, dim))
+        # ecs.append(EdgeConvModel(1, 1, 1, dim))
         fcs.append(
             nn.Sequential(
                 nn.Linear(dim, dim), nn.ReLU(),
@@ -198,7 +198,7 @@ class AggLayer(nn.Module):
         norms.append(tg.nn.norm.InstanceNorm(dim))
 
         self.ncs = nn.ModuleList(ncs)
-        self.ecs = nn.ModuleList(ecs)
+        # self.ecs = nn.ModuleList(ecs)
         self.fcs = nn.ModuleList(fcs)
         self.norms = nn.ModuleList(norms)
         self.num_conv = num_conv
@@ -215,10 +215,23 @@ class AggLayer(nn.Module):
             x = self.ncs[i](x, edge_index, edge_attr)
             x = nnF.relu(x)
             x = self.fcs[i](x)
-            edge_attr = nnF.relu(self.ecs[i](x, edge_index, edge_attr))
 
         top_k_vec = topk_vec(x, k)
         return top_k_vec, edge_attr
+
+
+    def forward_raw(self, x, edge_index, edge_attr):
+        if len(x.shape) == 1:
+            x = torch.unsqueeze(x, 1)
+        n = x.shape[0]
+
+        for i in range(self.num_conv):
+            x = self.norms[i](x)
+            x = self.ncs[i](x, edge_index, edge_attr)
+            x = nnF.relu(x)
+            x = self.fcs[i](x)
+
+        return x
 
 
 class AggNet(nn.Module):
@@ -235,7 +248,7 @@ class AggNet(nn.Module):
         x, edge_index, edge_attr = D.x, D.edge_index, D.edge_attr
         for i, layer in enumerate(self.layers):
             x, edge_attr = layer(x, edge_index, edge_attr, k)
-        return x, edge_attr
+        return x
 
     def all_intermediate_topk(self, D, k):
         x, edge_index, edge_attr = D.x, D.edge_index, D.edge_attr
@@ -247,31 +260,23 @@ class AggNet(nn.Module):
 
 
 class AggOnlyNet(nn.Module):
-    def __init__(self, dim=64):
+    def __init__(self, dim=64, num_conv=6, iterations=2):
         super(AggOnlyNet, self).__init__()
-        self.AggNet = AggNet(dim, num_conv=6, iterations=2)
+        self.AggNet = AggNet(dim, num_conv=num_conv, iterations=iterations)
+        self.CNet = MPNN(dim, num_internal_conv=5)
 
-    def forward(self, A, alpha, x=None, C_in=None):
+    def forward(self, A, alpha):
         m, n = A.shape
         k = int(np.ceil(alpha * m))
-        data_simple = ns.model.data.graph_from_matrix_basic(A)
-        # if C_in is None:
-        #     C = pyamg.strength.evolution_strength_of_connection(A) + sp.csr_matrix((1./np.abs(A.data), A.indices, A.indptr), A.shape)
-        # else:
-        #     C = C_in
-        # C_T = ns.lib.sparse.to_torch_sparse(C).coalesce()
-
-        data_node_score = tg.data.Data(x=(data_simple.x if x is None else torch.Tensor(x)), edge_index=data_simple.edge_index, edge_attr=data_simple.edge_attr)
 
         # Compute node scores
-        node_scores, edge_attr = self.AggNet(data_node_score, k)
-        node_scores = node_scores.squeeze()
-        edge_attr = edge_attr.squeeze()
-
-        # Find cluster centers
+        data_simple = ns.model.data.graph_from_matrix_basic(A)
+        node_scores = self.AggNet(data_simple, k).squeeze()
         top_k = torch.where(node_scores == 1)[0]
 
-        C_T = torch.sparse_coo_tensor(data_simple.edge_index, edge_attr, size=(m, n)).coalesce()
+        # Output Bellman-ford weights
+        BF_nodes, BF_edges = self.CNet(data_simple)
+        C_T = torch.sparse_coo_tensor(data_simple.edge_index, BF_edges.squeeze(), (m, n)).coalesce()
         C = ns.lib.sparse.torch_to_scipy(C_T)
 
         # Run Bellman-Ford to assign each node to an aggregate
@@ -309,6 +314,7 @@ class FullAggNet(nn.Module):
 
         self.PNet = MPNN(dim, num_internal_conv=4, input_edge_features=2)
         self.AggNet = AggNet(dim, num_conv=6, iterations=4)
+        self.CNet = MPNN(dim, num_internal_conv=5)
 
     def forward_intermediate_topk(self, A, alpha):
         m, n = A.shape
@@ -340,7 +346,7 @@ class FullAggNet(nn.Module):
           Interpolation operator, mapping from the coarse grid to fine grid.
           The transpose will map from the fine grid to the coarse grid.
         bf_weights : torch.sparse_coo_tensor
-          The weights matrix used for Bellman-Ford
+          The strength-of-connection matrix used for Bellman-Ford
         cluster_centers : torch.Tensor
           Centers of each cluster s.t. cluster_centers[i] is the root node of cluster i
         node_weights : torch.Tensor
@@ -351,24 +357,23 @@ class FullAggNet(nn.Module):
         k = int(np.ceil(alpha * m))
         data_simple = ns.model.data.graph_from_matrix_basic(A)
 
-        # Compute node scores and BF weights
-        node_scores, bf_edge_values = self.AggNet(data_simple, k)
-        node_scores = node_scores.squeeze()
-        BF_weights = torch.sparse_coo_tensor(data_simple.edge_index, bf_edge_values.squeeze(), size=(m,n)).coalesce()
+        # Compute node scores
+        node_scores, bf_edge_values = self.AggNet(data_simple, k).squeeze()
+        top_k = torch.where(node_scores == 1)[0]
 
-        # Find cluster centers
-        top_k = torch.argsort(node_scores, descending=True)[:k]
+        # Output Bellman-ford weights
+        BF_nodes, BF_edges = self.CNet(data_simple)
+        C_T = torch.sparse_coo_tensor(data_simple.edge_index, BF_edges.squeeze(), (m, n)).coalesce()
 
         # Run Bellman-Ford to assign each node to an aggregate
-        distance, nearest_center = ns.lib.graph.modified_bellman_ford(BF_weights, top_k)
+        distance, nearest_center = ns.lib.graph.modified_bellman_ford(C_T, top_k)
         agg_T = ns.lib.graph.nearest_center_to_agg(top_k, nearest_center)
 
         # Compute the smoother \hat{P}
         data = ns.model.data.graph_from_matrix(A, ns.lib.sparse_tensor.to_scipy(agg_T.detach()))
         nodes, edges = self.PNet(data)
-        P_hat_vals = edges.squeeze()
-        P_hat = torch.sparse_coo_tensor(data.edge_index, P_hat_vals, (m, n)).coalesce()
+        P_hat = torch.sparse_coo_tensor(data.edge_index, edges.squeeze(), (m, n)).coalesce()
 
         # Now, form P := \hat{P} Agg.
-        P = torch.sparse.mm(P_hat, agg_T).coalesce()
-        return agg_T, P, BF_weights, top_k, node_scores
+        P_T = torch.sparse.mm(P_hat, agg_T).coalesce()
+        return agg_T, P_T, C_T, top_k, node_scores
