@@ -2,3 +2,4 @@ runs
 models_chkpt
 models
 figures
+*.pdf

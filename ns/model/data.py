@@ -10,6 +10,8 @@ import pyamg
 import matplotlib.pyplot as plt
 import matplotlib
 import os
+import pygmsh
+import scipy.spatial as spat
 
 import pyamg.gallery.mesh
 import pyamg.gallery.fem
@@ -44,6 +46,23 @@ def graph_from_matrix_basic(A):
 
     nx_data = tg.utils.from_networkx(G, None, ['weight'])
     return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=abs(nx_data.edge_attr.float()))
+
+def graph_from_matrix_node_vals(A, x):
+    G = nx.from_scipy_sparse_matrix(A, edge_attribute='weight', parallel_edges=False, create_using=nx.DiGraph)
+    nx_data = tg.utils.from_networkx(G, None, ['weight'])
+    return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=abs(nx_data.edge_attr.float()))
+
+def graph_from_matrix_node_vals_with_inv(A, x):
+    G = nx.from_scipy_sparse_matrix(A, edge_attribute='weight', parallel_edges=False, create_using=nx.DiGraph)
+
+    invweight_dict = {} # 0 if in same cluster, 1 if not
+    for (u, v) in nx.edges(G):
+        invweight_dict = 1.0 / G.edges[u,v]['weight']
+
+    nx.set_edge_attributes(G, invweight_dict, 'invweight')
+    nx_data = tg.utils.from_networkx(G, None, ['weight', 'invweight'])
+    return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=abs(nx_data.edge_attr.float()))
+
 
 class Grid():
     def __init__(self, A_csr, x=None, extra={}):
@@ -189,7 +208,7 @@ class Grid():
     def save(self, fname):
         if not '.grid' in fname:
             fname = fname + '.grid'
-            
+
         ns.lib.helpers.pickle_save_bz2(fname, {
             'A': self.A,
             'x': self.x,
@@ -304,7 +323,7 @@ class Grid():
         interior_mask[boundary_indices] = False
         R = (sp.eye(pts.shape[0]).tocsr())[interior_mask]
 
-        mesh = pyamg.gallery.fem.mesh(pts[:, :2], mesh.cells_dict['triangle'].astype(np.int64), degree=1)
+        mesh = pyamg.gallery.fem.Mesh(pts[:, :2], mesh.cells_dict['triangle'].astype(np.int64), degree=1)
         A, _ = pyamg.gallery.fem.gradgradform(mesh, kappa=kappa, degree=1)
         A = A.tocsr()
         A_d = R@A@R.T
@@ -314,7 +333,26 @@ class Grid():
             'epsilon': epsilon,
             'theta': theta
         })
-    
+
+    def random_2d_unstructured(ref, epsilon=1.0, theta=0.0):
+        c = np.array([-5.07631394e-24,  1.18051145e-20, -1.18759608e-17,  6.76116717e-15,
+              -2.39110729e-12,  5.41996191e-10, -7.81738597e-08,  6.82384359e-06,
+              -3.12626571e-04,  3.62137155e-03,  2.72057000e-01])
+
+        N_int = np.random.randint(50, 250)
+        X = np.random.rand(N_int, 2)
+        #nv = np.random.randint(25, 400)
+        #ms = np.polyval(c, N)
+        ms = 1/ref
+
+        hull = spat.ConvexHull(X)
+        bv = X[hull.vertices]
+        with pygmsh.geo.Geometry() as geom:
+            geom.add_polygon(bv, ms)
+            mesh = geom.generate_mesh()
+
+        return Grid.meshio_2d_poisson_dirichlet(mesh, epsilon, theta)
+
     def structured_2d_poisson_dirichlet(n_pts_x, n_pts_y,
                                         xdim=(0,1), ydim=(0,1),
                                         epsilon=1.0, theta=0.0):
@@ -368,7 +406,7 @@ class Grid():
         v[:,1] = (v[:,1] + ydim[0]) * (ydim[1] - ydim[0])
 
         # Discretize w/ linear finite elements
-        mesh = pyamg.gallery.fem.mesh(v, e, degree=1)
+        mesh = pyamg.gallery.fem.Mesh(v, e, degree=1)
         A, _ = pyamg.gallery.fem.gradgradform(mesh, kappa=kappa, degree=1)
         A = A.tocsr()
         A_d = R@A@R.T

@@ -272,3 +272,58 @@ def normalize_mat(A):
     And /= np.max(And)
     And = (And * 0.9) + 0.1
     return sp.csr_matrix((And, A.indices, A.indptr), shape=A.shape)
+
+def ary_swap(ary, a, b):
+    t = ary[a]
+    ary[a] = ary[b]
+    ary[b] = t
+
+def quick_partition(ary, left, right, pivot):
+    v = ary[pivot]
+
+    # move pivot to end
+    ary_swap(ary, pivot, right)
+
+    store_idx = left
+    for i in range(left, right):
+        if ary[i] > v:
+            ary_swap(ary, store_idx, i)
+            store_idx += 1
+
+    # move pivot to final place
+    ary_swap(ary, store_idx, right)
+
+    return store_idx
+
+def quick_select(ary, left, right, k):
+    if left == right:
+        return ary[left]
+
+    pivot_idx = np.random.randint(left, right+1)
+    pivot_idx = quick_partition(ary, left, right, pivot_idx)
+
+    if k == pivot_idx:
+        return ary[k]
+    elif k < pivot_idx:
+        return quick_select(ary, left, pivot_idx - 1, k)
+    else:
+        return quick_select(ary, pivot_idx + 1, right, k)
+
+def topk_vec(x, k):
+    out = None
+
+    if isinstance(x, torch.Tensor):
+        out = torch.zeros_like(x)
+        x = x.detach().cpu().numpy().flatten()
+    elif isinstance(x, list):
+        x = np.array(x)
+    elif isinstance(x, np.ndarray):
+        out = np.zeros_like(x)
+
+    if len(x.shape) != 1:
+        x = x.flatten()
+    assert(len(x.shape) == 1)
+
+    k_smallest = quick_select(np.copy(x), 0, len(x)-1, k-1)
+    out[x>=k_smallest] = 1.0
+    return out

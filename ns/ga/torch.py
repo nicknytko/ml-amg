@@ -42,7 +42,7 @@ def model_weights_as_vector(model, folds=None):
 
     # Finally, populate vector and folds assignment
     cur_spot = 0
-    for name, weights in model.state_dict().items():
+    for name, weights in state_dict.items():
         vector = weights.detach().numpy().flatten()
         n = len(vector)
 
@@ -97,7 +97,6 @@ class TorchGA:
             self.fold_names = model_fold_names.copy()
 
         weights, self.folds = model_weights_as_vector(model=self.model, folds=self.fold_names)
-        print(self.fold_names, self.folds)
 
         net_population_weights = []
         net_population_weights.append(weights)

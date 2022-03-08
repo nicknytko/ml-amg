@@ -35,7 +35,7 @@ parser = argparse.ArgumentParser(description='Demo of the aggregate-picking netw
 parser.add_argument('system', type=str, help='Problem in data folder to evaluate')
 parser.add_argument('--model', type=str, help='Model file to evaluate')
 parser.add_argument('--n', type=int, default=None, help='Size of the system.  In 2d, this determines the legnth in one dimension')
-parser.add_argument('--alpha', type=float, default=0.3, help='Coarsening ratio for aggregation')
+parser.add_argument('--alpha', type=float, default=0.1, help='Coarsening ratio for aggregation')
 args = parser.parse_args()
 
 N = args.n
@@ -52,29 +52,32 @@ def evaluate_dataset(dataset, use_model=True):
     conv = np.zeros(len(dataset))
     for i in range(len(dataset)):
         A = dataset[i].A
+        np.random.seed(0)
         if use_model:
             with torch.no_grad():
                 agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
             P = ns.lib.sparse_tensor.to_scipy(P_T)
         else:
-            C = common.strength_measure_funcs['invev'](A)
+            C = common.strength_measure_funcs['olson'](A)
+            #Agg, _, _ = ns.lib.graph.lloyd_aggregation(C, ratio=alpha, distance='same', rand=0)
             Agg, _ = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
             P = ns.lib.multigrid.smoothed_aggregation_jacobi(A, Agg)
         b = np.zeros(A.shape[1])
 
-        np.random.seed(0)
-        x = np.random.randn(A.shape[1])
+        x = np.random.RandomState(0).randn(A.shape[1])
         x /= la.norm(x, 2)
-        np.random.seed()
 
-        res = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega)[1]
+        if use_model:
+            res = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-6, singular=neumann_solve, jacobi_weight=omega)[1]
+        else:
+            res = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega)[1]
         if np.isnan(res):
             conv[i] = 0.0
         else:
             conv[i] = res
     return conv
 
-model = ns.model.agg_interp.FullAggNet(64)
+model = ns.model.agg_interp.FullAggNet(64, num_conv=2, iterations=4)
 model.load_state_dict(torch.load(args.model))
 model.eval()
 
@@ -82,19 +85,23 @@ print('Computing Lloyd, SA baseline...')
 start = time.time()
 baseline = evaluate_dataset(ds, False)
 print(f'done in {time.time() - start:.3f} seconds')
+baseline_avg = np.average(baseline)
+print('Baseline avg', baseline_avg)
+
 
 print('Computing ML...')
 start = time.time()
 ml = evaluate_dataset(ds, True)
 print(f'done in {time.time() - start:.3f} seconds')
-
-baseline_avg = np.average(baseline)
 ml_avg = np.average(ml)
+print('ML avg', ml_avg)
+
 
 if 'train' in args.system:
     prefix = 'train'
 else:
     prefix = 'test'
+
 
 plt.figure(figsize=(8,8))
 plt.title('ML vs Lloyd Convergence Analysis')
