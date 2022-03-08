@@ -8,6 +8,18 @@ import ns.lib.sparse as sparse
 import ns.model.data
 import ns.lib.graph
 import pyamg
+# from ns.lib.helpers import topk_vec
+
+
+def topk_vec(x, k):
+    if len(x.shape) != 1:
+        x = x.squeeze()
+    assert(len(x.shape) == 1)
+
+    top_k = torch.argsort(x, descending=True)[:k]
+    top_k_vec = torch.zeros(x.shape)
+    top_k_vec[top_k] = 1.0 # (n, 1), with 1.0 for cluster centers and 0.0 elsewhere
+    return top_k_vec
 
 
 class TensorLambda(nn.Module):
@@ -20,17 +32,6 @@ class TensorLambda(nn.Module):
 
     def forward(self, x):
         return self.f(x)
-
-
-def topk_vec(x, k):
-    if len(x.shape) != 1:
-        x = x.squeeze()
-    assert(len(x.shape) == 1)
-
-    top_k = torch.argsort(x, descending=True)[:k]
-    top_k_vec = torch.zeros(x.shape)
-    top_k_vec[top_k] = 1.0 # (n, 1), with 1.0 for cluster centers and 0.0 elsewhere
-    return top_k_vec
 
 
 class smallEdgeModel(nn.Module):
@@ -242,7 +243,6 @@ class AggNet(nn.Module):
             layers.append(AggLayer(dim, num_conv=num_conv))
         self.layers = nn.ModuleList(layers)
         self.num_iterations = iterations
-        # self.edge_out = EdgeConvModel(1, 1, 1, dim)
 
     def forward(self, D, k):
         x, edge_index, edge_attr = D.x, D.edge_index, D.edge_attr
@@ -309,22 +309,18 @@ class FullAggNet(nn.Module):
     swarm or genetic algorithms.
     '''
 
-    def __init__(self, dim=64):
+    def __init__(self, dim=64, num_conv=2, iterations=4):
         super(FullAggNet, self).__init__()
 
         self.PNet = MPNN(dim, num_internal_conv=4, input_edge_features=2)
-        self.AggNet = AggNet(dim, num_conv=6, iterations=4)
+        self.AggNet = AggNet(dim, num_conv=num_conv, iterations=iterations)
         self.CNet = MPNN(dim, num_internal_conv=5)
 
     def forward_intermediate_topk(self, A, alpha):
         m, n = A.shape
         k = int(np.ceil(alpha * m))
         data_simple = ns.model.data.graph_from_matrix_basic(A)
-
-        BF_nodes, BF_edges = self.CNet(data_simple)
-        BF_weights = torch.sparse_coo_tensor(data_simple.edge_index, BF_edges.squeeze(), (m, n)).coalesce()
-
-        data_node_score = tg.data.Data(x=data_simple.x, edge_index=data_simple.edge_index, edge_attr=torch.column_stack((data_simple.edge_attr, BF_edges.squeeze())))
+        data_node_score = tg.data.Data(x=data_simple.x, edge_index=data_simple.edge_index, edge_attr=data_simple.edge_attr)
 
         return self.AggNet.all_intermediate_topk(data_node_score, k)
 
@@ -358,7 +354,7 @@ class FullAggNet(nn.Module):
         data_simple = ns.model.data.graph_from_matrix_basic(A)
 
         # Compute node scores
-        node_scores, bf_edge_values = self.AggNet(data_simple, k).squeeze()
+        node_scores = self.AggNet(data_simple, k).squeeze()
         top_k = torch.where(node_scores == 1)[0]
 
         # Output Bellman-ford weights

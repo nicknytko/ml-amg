@@ -6,6 +6,7 @@ import sys
 import torch
 import warnings
 import matplotlib.pyplot as plt
+import traceback
 
 sys.path.append('../')
 import ns.model.agg_interp
@@ -54,7 +55,7 @@ def evaluate_dataset(weights, dataset, model=None, S=None, neumann_solve=False, 
             C = S(A)
 
         try:
-            L_Agg, L_Seeds = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
+            L_Agg, L_Roots, L_Seeds = ns.lib.graph.lloyd_aggregation(C, ratio=alpha, distance='same', rand=0)
         except RuntimeWarning as e:
             print(f'evaluate_dataset(): Exception on grid {i}: {e}')
 
@@ -63,7 +64,8 @@ def evaluate_dataset(weights, dataset, model=None, S=None, neumann_solve=False, 
                 with torch.no_grad():
                     agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
                 P = ns.lib.sparse_tensor.to_scipy(P_T)
-            except:
+            except Exception as e:
+                print(f'Could not evalutae grid {i}: {traceback.format_exc()}')
                 conv[i] = 1.0
                 continue
         else:

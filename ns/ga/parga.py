@@ -31,7 +31,7 @@ class ParallelGA:
           Percent of the population to use for breeding when steady state selection is used
         steady_state_bottom_discard : float (default 1/3)
           Percent of the population to discard when steady state selection is used
-        selection : str {steady_state, roulette}
+        selection : str {steady_state, roulette, greedy}
           Selection method to use
         num_workers : int (default 2)
           Number of worker processes to use
@@ -42,7 +42,7 @@ class ParallelGA:
         self.population_fitness = np.zeros(self.population_size)
         self.population_computed_fitness = np.zeros(self.population_size, bool)
 
-        self.fitness_func = kwargs.get('fitness_func')
+        self.fitness_func = kwargs.get('fitness_func', None)
         self.crossover_probability = kwargs.get('crossover_probability', 0.5)
         self.mutation_probability = kwargs.get('mutation_probability', 0.3)
 

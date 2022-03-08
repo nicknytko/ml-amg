@@ -10,6 +10,8 @@ import pyamg
 import matplotlib.pyplot as plt
 import matplotlib
 import os
+import pygmsh
+import scipy.spatial as spat
 
 import pyamg.gallery.mesh
 import pyamg.gallery.fem
@@ -321,7 +323,7 @@ class Grid():
         interior_mask[boundary_indices] = False
         R = (sp.eye(pts.shape[0]).tocsr())[interior_mask]
 
-        mesh = pyamg.gallery.fem.mesh(pts[:, :2], mesh.cells_dict['triangle'].astype(np.int64), degree=1)
+        mesh = pyamg.gallery.fem.Mesh(pts[:, :2], mesh.cells_dict['triangle'].astype(np.int64), degree=1)
         A, _ = pyamg.gallery.fem.gradgradform(mesh, kappa=kappa, degree=1)
         A = A.tocsr()
         A_d = R@A@R.T
@@ -331,6 +333,25 @@ class Grid():
             'epsilon': epsilon,
             'theta': theta
         })
+
+    def random_2d_unstructured(ref, epsilon=1.0, theta=0.0):
+        c = np.array([-5.07631394e-24,  1.18051145e-20, -1.18759608e-17,  6.76116717e-15,
+              -2.39110729e-12,  5.41996191e-10, -7.81738597e-08,  6.82384359e-06,
+              -3.12626571e-04,  3.62137155e-03,  2.72057000e-01])
+
+        N_int = np.random.randint(50, 250)
+        X = np.random.rand(N_int, 2)
+        #nv = np.random.randint(25, 400)
+        #ms = np.polyval(c, N)
+        ms = 1/ref
+
+        hull = spat.ConvexHull(X)
+        bv = X[hull.vertices]
+        with pygmsh.geo.Geometry() as geom:
+            geom.add_polygon(bv, ms)
+            mesh = geom.generate_mesh()
+
+        return Grid.meshio_2d_poisson_dirichlet(mesh, epsilon, theta)
 
     def structured_2d_poisson_dirichlet(n_pts_x, n_pts_y,
                                         xdim=(0,1), ydim=(0,1),

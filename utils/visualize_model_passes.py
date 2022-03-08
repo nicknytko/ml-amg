@@ -52,7 +52,7 @@ else:
 
 np.random.seed()
 
-model = ns.model.agg_interp.AggOnlyNet(80)
+model = ns.model.agg_interp.FullAggNet(64, num_conv=2, iterations=4)
 model.load_state_dict(torch.load(args.model))
 model.eval()
 
@@ -94,5 +94,6 @@ for i in range(len(intermediate)):
     ax.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'k*', markersize=6)
     ax.set_aspect('equal')
     ax.set_title(f'Pass {i+1}')
+plt.savefig('agg_pass.pdf')
 
 plt.show(block=True)

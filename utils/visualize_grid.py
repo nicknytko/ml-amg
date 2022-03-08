@@ -29,3 +29,5 @@ grid = ns.model.data.Grid.load(args.system)
 grid.plot()
 plt.gca().set_aspect('equal')
 plt.show(block=True)
+
+print('DoF', grid.A.shape[0])

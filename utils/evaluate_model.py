@@ -20,6 +20,7 @@ import ns.model.data
 import ns.lib.sparse
 import ns.lib.sparse_tensor
 import ns.lib.multigrid
+import ns.lib.graph
 
 import common
 
@@ -51,7 +52,26 @@ if os.path.exists(args.system):
     n = A.shape[0]
     np.random.seed(0)
     C = common.strength_measure_funcs[args.strength_measure](A)
-    Agg, Agg_roots = pyamg.aggregation.lloyd_aggregation(C, ratio=alpha, distance='same')
+    Agg, Agg_roots, Agg_seeds = ns.lib.graph.lloyd_aggregation(C, ratio=alpha, distance='same')
+
+    _, dumb_centers = ns.lib.graph.modified_bellman_ford(ns.lib.sparse.scipy_to_torch(C), torch.Tensor(Agg_seeds).long())
+    Agg_dumb = ns.lib.sparse.torch_to_scipy(ns.lib.graph.nearest_center_to_agg(torch.Tensor(Agg_seeds).long(), dumb_centers))
+
+    figure_size = (10,10)
+elif args.system == '2d_unstructured':
+    if alpha is None:
+        alpha = .1
+    grid = ns.model.data.Grid.random_2d_unstructured(N)
+    A = grid.A
+    n = A.shape[0]
+    print(n)
+    np.random.seed(0)
+    C = common.strength_measure_funcs[args.strength_measure](A)
+    Agg, Agg_roots, Agg_seeds = ns.lib.graph.lloyd_aggregation(C, ratio=alpha, distance='same')
+
+    _, dumb_centers = ns.lib.graph.modified_bellman_ford(ns.lib.sparse.scipy_to_torch(C), torch.Tensor(Agg_seeds).long())
+    Agg_dumb = ns.lib.sparse.torch_to_scipy(ns.lib.graph.nearest_center_to_agg(torch.Tensor(Agg_seeds).long(), dumb_centers))
+
     figure_size = (10,10)
 elif args.system == '1d_dirichlet':
     figure_size = (10,3)
@@ -128,11 +148,9 @@ Dinv = sp.diags([1.0 / A.diagonal()], [0])
 omega = (4. / 3.) / np.abs(spla.eigs(Dinv @ A, k=1, return_eigenvectors=False)).item()
 smoother = (sp.eye(n) - omega*Dinv@A)
 P_SA = smoother @ Agg
+P_Dumb = smoother @ Agg_dumb
 
-# Create PyTorch tensor versions of everything
-smoother_T = ns.lib.sparse.to_torch_sparse(smoother).to(device)
-Agg_T = ns.lib.sparse.to_torch_sparse(Agg).to(device)
-Agg_roots_T = torch.Tensor(Agg_roots)
+# Create our graph representation of A
 A_Graph = ns.model.data.graph_from_matrix_basic(A)
 
 def compute_agg_and_p(model):
@@ -140,7 +158,8 @@ def compute_agg_and_p(model):
     with torch.no_grad():
         agg, P, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
         #agg_sp = ns.lib.sparse_tensor.to_scipy(agg_T)
-        agg_T = ns.lib.sparse.scipy_to_torch(agg)
+        #agg_T = ns.lib.sparse.scipy_to_torch(agg)
+        agg_T = agg
 
     return agg_T, P, bf_weights, cluster_centers, node_scores
 
@@ -183,7 +202,12 @@ plot_grid(Agg, P_SA, C, Agg_roots, torch.zeros(A.shape[0]))
 plt.title(f'Baseline Lloyd + Jacobi, conv={loss_fcn(A, ns.lib.sparse.to_torch_sparse(P_SA)):.4f}')
 plt.savefig('lloyd.pdf')
 
-model = ns.model.agg_interp.AggOnlyNet(32, num_conv=2, iterations=2)
+plt.figure(figsize=figure_size)
+plot_grid(Agg_dumb, P_Dumb, C, Agg_seeds, torch.zeros(A.shape[0]))
+plt.title(f'Lloyd seeds + Jacobi, conv={loss_fcn(A, ns.lib.sparse.to_torch_sparse(P_Dumb)):.4f}')
+plt.savefig('dumb.pdf')
+
+model = ns.model.agg_interp.FullAggNet(64, num_conv=2, iterations=4)
 model.load_state_dict(torch.load(args.model))
 model.eval()
 

@@ -138,14 +138,7 @@ agg_v = np.zeros(A.shape[1])
 agg_v[Agg_roots] = 1.
 
 # Model
-model = ns.model.agg_interp.AggOnlyNet(64)
-model_folds = [
-    'AggNet.layers.0',
-    'AggNet.layers.1',
-    'AggNet.layers.2',
-    'AggNet.layers.3',
-    'AggNet.feature_map'
-]
+model = ns.model.agg_interp.FullAggNet(64, num_conv=2, iterations=4)
 
 def print_mat_rows(P, round_digits=5):
     if isinstance(P, torch.Tensor) and P.is_sparse:
@@ -172,14 +165,10 @@ def compute_agg_and_p(weights, random):
     model.eval()
 
     n = A.shape[1]
-    x = np.zeros(n)
-    x[random.choice(n, size=int(np.ceil(alpha*n)), replace=False)] = 1.
-
     with torch.no_grad():
-        agg_sp, P, bf_weights, cluster_centers, node_scores = model(A, alpha, x=x, C_in=C)
-        agg_T = ns.lib.sparse.scipy_to_torch(agg_sp)
+        agg_T, P_T, bf_weights, cluster_centers, node_scores = model(A, alpha)
 
-    return agg_T, P, bf_weights, cluster_centers, node_scores
+    return agg_T, P_T, bf_weights, cluster_centers, node_scores
 
 def loss_fcn(A, P_T):
     P = ns.lib.sparse_tensor.to_scipy(P_T)
@@ -259,7 +248,7 @@ if __name__ == '__main__':
     plt.show()
     plt.pause(1)
 
-    population = ns.ga.torch.TorchGA(model=model, num_solutions=args.initial_population_size, model_fold_names=model_folds)
+    population = ns.ga.torch.TorchGA(model=model, num_solutions=args.initial_population_size)
     initial_population = population.population_weights
 
     perturb_val = 1
@@ -278,7 +267,7 @@ if __name__ == '__main__':
     display_progress(ga_instance)
 
     for i in range(args.max_generations):
-        ga_instance.stochastic_iteration()
+        ga_instance.iteration()
         display_progress(ga_instance)
 
     ga_instance.finish_workers()
