@@ -74,12 +74,12 @@ def evaluate_dataset(weights, dataset, model=None, S=None, neumann_solve=False, 
         x = np.random.RandomState(0).randn(A.shape[1])
         x /= la.norm(x, 2)
 
-        res = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-6, singular=neumann_solve, jacobi_weight=omega)[1]
+        res = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega)[1]
         if np.isnan(res):
             conv[i] = 0.0
         else:
             conv[i] = res
-    return np.average(conv)
+    return conv
 
 def evaluate_ref_conv(dataset, strength_measure_func, neumann_solve=False, alpha=0.3, omega=2./3.):
     conv = np.zeros(len(dataset))

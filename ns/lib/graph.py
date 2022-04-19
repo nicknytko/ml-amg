@@ -161,7 +161,7 @@ def lloyd_aggregation(C, ratio=0.03, distance='unit', maxiter=10, rand=None):
 
     N = C.shape[0]
     num_seeds = int(np.ceil(ratio * N))
-    seeds = np.random.permutation(N)[:num_seeds]
+    seeds = rand.permutation(N)[:num_seeds]
     _, clusters, roots = pyamg.graph.lloyd_cluster(G, np.copy(seeds), maxiter=maxiter)
 
     row = (clusters >= 0).nonzero()[0]

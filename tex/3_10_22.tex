@@ -59,6 +59,7 @@
 \newcommand{\setbar}{\:\middle|\:}
 \renewcommand{\div}{\grad \cdot}
 \renewcommand{\Re}{\text{Re}}
+\newcommand{\var}[1]{\texttt{{#1}}}
 
 \begin{document}
 \section{Background}
@@ -123,7 +124,7 @@ These steps are formalized in Alg \ref{alg:algo}.
 \end{algorithm}
 
 \section{Genetic Training}
-Training of both networks is done at the same time with a custom-written genetic algorithm that takes advantage of the easily parallelizable fitness calculation.  A genetic algorithm is used because it does not require any gradient information, which benefits us because the algorithm used to output the aggregates is not easily differentiable.
+Training of both networks is done at the same time with a custom-written genetic algorithm that takes advantage of the easily parallelizable fitness calculation.  A genetic algorithm is used because it does not require any gradient information\cite{Mitchell1998-sp}, which benefits us because the algorithm used to output the aggregates is not easily differentiable.
 
 A basic overview of the training algorithm is that the method is seeded with some number of randomly generated networks. A subset of the best performing (most fit) networks are selected and \textit{bred} with one another (crossing weights/traits) and \textit{mutations} inserted (random perturbations to weights) to create another population of networks.  This is then repeated for many \textit{generations} until a set of hopefully trained networks is obtained, from which we can pick the best fit as our final network.
 
@@ -144,20 +145,30 @@ I've experimentally found that using steady-state selection will train the netwo
 
 I kind of think of this as a sort of greedy approximation to gradient descent: we have one network and at every step we attempt to take the most optimal step towards a better network.
 
-\section{Baseline Lloyd Method}
-The baseline method for computing some multigrid smoothing operator is given by \textit{Lloyd aggregation}, the implementation of which was taken from PyAMG\cite{OlSc2018}.  This algorithm returns a tentative aggregate operator, $\mat{\text{Agg}}$.  Afterwards, a Jacobi smoother is formed by
+\section{Lloyd Aggregation}
+The baseline method for computing some multigrid smoothing operator is given by \textit{Lloyd aggregation}, the implementation of which was taken from PyAMG\cite{OlSc2018}.  This algorithm is \textit{seeded} via a random set of aggregate centers which are then iteratively refined by an implementation of Lloyd's method (also known as K-Means) reformulated for graph inputs\cite{bell_2008}.  One may conject that
+
+To allow the method to output something sensible for anisotropic and generally more difficult problems, the distance between nodes is defined by a heuristic \textit{strength-of-connection} measure.  Here, we use a combination of an evolution-based measure\cite{Olson2009} and the inverse of the magnitude of the entries of the system.  Formally, let the strength measure being used be defined as
+\begin{equation}
+  \mat{C} := \mat{S} + \frac{1}{\abs{\mat{A}}},
+\end{equation}
+where $\mat{S}$ is the evolution measure, $\mat{A}$ is the original system, and $\frac{1}{\abs{\cdot}}$ is applied entrywise to $\mat{A}$.
+%This strength measure is hereby referred to as the \textit{Olson} strength-measure\footnote{Thanks to Scott for the name}.
+
+Once a set of aggregate centers is found, each remaining node is assigned to an aggregate by finding its nearest (by means of $\mat{C}$) center node.  This is done by a modified Bellman-Ford algorithm\cite{bell_2008}, whose implementation is given in Alg. \ref{alg:bellman_ford}.  After each nearest center node is found, a tentative aggregate operator is returned by allotting each aggregate a column in $\mat{\text{Agg}}\in\mathbb{R}^{n \times c}$, where $\mat{\text{Agg}}_{ij}=1$ iff node $i$ belongs in aggregate $j$.
+
+Note that $\mat{\text{Agg}}$ is not suitable to use directly as a multigrid interpolation/restriction operator as there is no direct information crossover between aggregates.  Therefore, we opt to \textit{smooth} the columns of the aggregate matrix by means of a Jacobi smoother,
 \begin{align}
   \mat{S} &:= \mat{I} - \omega\mat{D}^{-1}\mat{A}, \\
   \omega &:= \frac{4}{3\lambda_{\max}\left(\mat{A}\right)},
 \end{align}
-where $\mat{A}$ is the linear system to solve and $\mat{D}$ is the diagonal portion of $\mat{A}$.  The final interpolation is formed by
+where $\mat{D}$ is the diagonal portion of $\mat{A}$.  The final interpolation is formed by
 \begin{equation}
   \mat{P} = \mat{S} \mat{\text{Agg}}.
 \end{equation}
 
 \section{Results}
-The ML method is compared against a baseline Lloyd aggregation with Jacobi smoothing, for a coarsening ratio of $\alpha=0.1$.  Performance is measured by \textit{average rate of convergence} for some set of problems; detailed information is given in table \ref{tab:conv}.
-
+The ML method is compared against a baseline Lloyd aggregation with Jacobi smoothing, for a coarsening ratio of $\alpha=0.1$.  Performance is measured by \textit{average rate of convergence} for some set of problems; detailed information is given in table \ref{tab:conv}.  Each ML agent is trained for that specific class of problem, i.e. \textit{isotropic} or \textit{anisotropic}.
 \begin{table}[h]
   \centering
   \begin{tabular}{c c c c}
@@ -169,11 +180,28 @@ The ML method is compared against a baseline Lloyd aggregation with Jacobi smoot
     Anisotropic & Test & 0.7978 & 0.7697 \\
     \hline
   \end{tabular}
-  \caption{Convergence of ML vs baseline Lloyd+SA on various sets of problems.}
+  \caption{Convergence of ML vs baseline Lloyd+SA on various sets of problems, individual networks trained on problem type.}
   \label{tab:conv}
 \end{table}
-
 \FloatBarrier
+
+Additionally, an agent was trained on datasets of both isotropic and anisotropic problems (the union of the problems in table \ref{tab:conv}.  The results of this new network are given in \ref{tab:conv_all}.
+\begin{table}[h]
+  \centering
+  \begin{tabular}{c c c c}
+    \textbf{Problem Type} & \textbf{Data Set} & \textbf{Lloyd, SA Conv.} & \textbf{ML Conv.} \\
+    \hline
+    Isotropic & Train & 0.4208 & 0.3889 \\
+    Isotropic & Test & 0.4177 & 0.3828 \\
+    Anisotropic & Train & 0.7705 & 0.7421 \\
+    Anisotropic & Test & 0.7978 & 0.7688 \\
+    \hline
+  \end{tabular}
+  \caption{Convergence of ML vs baseline Lloyd+SA on various sets of problems, one agent trained on both isotropic and anisotropic problems.}
+  \label{tab:conv_all}
+\end{table}
+\FloatBarrier
+All following numerical results were generated from the model trained on both sets of problems.
 \subsection{Isotropic Results}
 
 \begin{figure}[h]
@@ -400,7 +428,7 @@ The ML method is compared against a baseline Lloyd aggregation with Jacobi smoot
     \includegraphics[width=\textwidth, trim=80 70 70 50, clip]{grid_anis_3_ml.pdf}
     \caption{ML}
   \end{subfigure}
-  \caption{Aggregate and interpolation data for a random anisotropic mesh.  This is a different network from the isotropic case.}
+  \caption{Aggregate and interpolation data for an anisotropic problem with 198 DoF.  The problem is stretched by a factor of $0.177$ along $\theta=0.98\pi$.}
   \label{fig:grid_anis_3}
 \end{figure}
 
@@ -427,7 +455,7 @@ The ML method is compared against a baseline Lloyd aggregation with Jacobi smoot
     \includegraphics[width=\textwidth, trim=80 70 70 50, clip]{grid_anis_4_ml.pdf}
     \caption{ML}
   \end{subfigure}
-  \caption{Aggregate and interpolation data for a random anisotropic mesh.  This is a different network from the isotropic case.}
+  \caption{Aggregate and interpolation data for an anisotropic problem with 309 DoF.  The problem is stretched by a factor of $0.131$ along $\theta=0.86\pi$.}
   \label{fig:grid_anis_4}
 \end{figure}
 
@@ -454,7 +482,7 @@ The ML method is compared against a baseline Lloyd aggregation with Jacobi smoot
     \includegraphics[width=\textwidth, trim=80 70 70 50, clip]{grid_anis_8_ml.pdf}
     \caption{ML}
   \end{subfigure}
-  \caption{Aggregate and interpolation data for a random anisotropic mesh.  This is a different network from the isotropic case.}
+  \caption{Aggregate and interpolation data for an anisotropic problem with 157 DoF.  The problem is stretched by a factor of $1.259$ along $\theta=0.55\pi$.}
   \label{fig:grid_anis_8}
 \end{figure}
 
@@ -463,6 +491,56 @@ The ML method is compared against a baseline Lloyd aggregation with Jacobi smoot
   \includegraphics[width=\textwidth, trim=120 0 100 0, clip]{grid_anis_8_agg_pass.pdf}
   \caption{Tentative aggregate centers after each binarization ``pass''.  This is the same mesh as in figure \ref{fig:grid_anis_8}.}
 \end{figure}
+
+\appendix
+\section{Graph Algorithms}
+\begin{algorithm}
+  \begin{algorithmic}
+    \Procedure{BellmanFord}{$\mat{C}\in\mathbb{R}^{n \times n}, \var{centers}\in\mathbb{R}^n$}
+      \State $\var{dist} := \begin{bmatrix}\infty, \infty, \ldots, \infty\end{bmatrix}\in\mathbb{R}^n$
+      \State $\var{nearest} := \begin{bmatrix}0, 0, \ldots, 0\end{bmatrix}\in\mathbb{R}^n$ \\
+      \For{$c \in \var{centers}$}
+        \State $\var{dist}_c \gets 0$
+        \State $\var{nearest}_c \gets c$
+      \EndFor \\
+      \State $\var{finished} := \var{True}$
+      \While{$\neg \var{finished}$}
+        \State $\var{finished} \gets \var{True}$
+        \For{$\left(i,j\right) \text{ such that } \mat{C}_{ij} \neq 0$}
+          \If{$\var{distance}_i + \mat{C}_{ij} < \var{distance}_j$}
+            \State $\var{distance}_j \gets \var{distance}_i + \mat{C}_{ij}$
+            \State $\var{nearest}_j \gets \var{nearest}_i$
+            \State $\var{finished} \gets \var{False}$
+          \EndIf
+        \EndFor
+      \EndWhile \\
+      \State \textbf{return} $\var{distance}$, $\var{nearest}$
+    \EndProcedure
+  \end{algorithmic}
+  \caption{Modified Bellman-Ford}
+  \label{alg:bellman_ford}
+\end{algorithm}
+
+\begin{algorithm}
+  \begin{algorithmic}
+    \Procedure{AssignAggregates}{$\var{centers}\in\mathbb{R}^{c}, \var{nearest}\in\mathbb{R}^n$}
+      \State $\var{center\_number} := \{\}$
+      \State $\text{Agg} \in \mathbb{R}^{n \times c}$ \\
+
+      \For{$i \gets 1, c$}
+        \State $\var{center\_number}\left[\var{centers}_i\right] \gets i$ \Comment{Assign each center a column in Agg}
+      \EndFor
+      \For{$i \gets 1, n$}
+        \State $j := \var{center\_number}\left[\var{centers}_i\right]$ \Comment{Find the correct column based on the center}
+        \State $\text{Agg}_{ij} = 1$
+      \EndFor
+
+      \State \textbf{return} $\text{Agg}$
+    \EndProcedure
+  \end{algorithmic}
+  \caption{Assignment of nodes to aggregates}
+  \label{alg:assign_aggregates}
+\end{algorithm}
 
 \bibliographystyle{siam}
 \bibliography{navier}

@@ -85,7 +85,7 @@ class Grid():
     def networkx(self):
         return nx.from_scipy_sparse_matrix(self.A, edge_attribute='weight', parallel_edges=False, create_using=nx.DiGraph)
 
-    def plot(self, ax=None):
+    def plot(self, ax=None, node_size=100):
         '''
         Plot the nodes and edges of the sparse matrix.
 
@@ -104,7 +104,7 @@ class Grid():
             for node in graph.nodes:
                 positions[node] = self.x[node]
 
-        nx.drawing.nx_pylab.draw_networkx(graph, ax=ax, pos=positions, arrows=False, with_labels=False, node_size=100)
+        nx.drawing.nx_pylab.draw_networkx(graph, ax=ax, pos=positions, arrows=False, with_labels=False, node_size=node_size)
 
     def plot_spider_agg(self, AggOp, P, ax=None, lw=4):
         '''
@@ -220,7 +220,10 @@ class Grid():
             fname = fname + '.grid'
 
         loaded = ns.lib.helpers.pickle_load_bz2(fname)
-        return Grid(loaded['A'], loaded['x'], loaded['extra'] if 'extra' in loaded else {})
+        extra = loaded['extra'] if 'extra' in loaded else {}
+        extra['filename'] = fname
+
+        return Grid(loaded['A'], loaded['x'], extra)
 
     def load_dir(directory):
         grids = []
@@ -333,6 +336,73 @@ class Grid():
             'epsilon': epsilon,
             'theta': theta
         })
+
+    def meshio_2d_poisson_dirichlet_jump_coeffs(mesh, jumps):
+        '''
+        Creates a 2D poisson system on an unstructured mesh, defined by a meshio object
+        This problem has jump discontinuities, defined by a Voronoi partitioning of the
+        seed points passed in.
+
+        Parameters
+        ----------
+        mesh : meshio.Mesh
+          Mesh that defines the PDE domain.  Should have the following cells:
+          - 'line' (for boundary data)
+          - 'triangle' (for element data)
+        jumps : np.ndarray
+          (n, 3) array defining the seeds for the spatial partitioning.  Each row
+          should have the format [x, y, d], for scalar diffusion coefficient d.
+        '''
+
+        Nj = jumps.shape[0]
+
+        # Set up diffusion coefficient
+        def kappa(x, y):
+            X = np.array([x, y]).reshape((1, 2))
+            Xr = np.repeat(X, Nj, axis=0)
+            closest = np.argmin(la.norm(Xr - jumps[:, :2], axis=1))
+            return jumps[closest, -1]
+
+        pts = mesh.points
+        boundary_indices = set()
+        for (a, b) in mesh.cells_dict['line']:
+            boundary_indices.add(a)
+            boundary_indices.add(b)
+        boundary_indices = list(boundary_indices)
+
+        interior_mask = np.ones(pts.shape[0], dtype=bool)
+        interior_mask[boundary_indices] = False
+        R = (sp.eye(pts.shape[0]).tocsr())[interior_mask]
+
+        mesh = pyamg.gallery.fem.Mesh(pts[:, :2], mesh.cells_dict['triangle'].astype(np.int64), degree=1)
+        A, _ = pyamg.gallery.fem.gradgradform(mesh, kappa=kappa, degree=1)
+        A = A.tocsr()
+        A_d = R@A@R.T
+        A_d.eliminate_zeros()
+
+        return Grid(A_d, (R@pts)[:, :2], {
+            'jumps': jumps
+        })
+
+    def meshio_2d_poisson_dirichlet_custom(mesh, kappa, extras):
+        pts = mesh.points
+        boundary_indices = set()
+        for (a, b) in mesh.cells_dict['line']:
+            boundary_indices.add(a)
+            boundary_indices.add(b)
+        boundary_indices = list(boundary_indices)
+
+        interior_mask = np.ones(pts.shape[0], dtype=bool)
+        interior_mask[boundary_indices] = False
+        R = (sp.eye(pts.shape[0]).tocsr())[interior_mask]
+
+        mesh = pyamg.gallery.fem.Mesh(pts[:, :2], mesh.cells_dict['triangle'].astype(np.int64), degree=1)
+        A, _ = pyamg.gallery.fem.gradgradform(mesh, kappa=kappa, degree=1)
+        A = A.tocsr()
+        A_d = R@A@R.T
+        A_d.eliminate_zeros()
+
+        return Grid(A_d, (R@pts)[:, :2], extras)
 
     def random_2d_unstructured(ref, epsilon=1.0, theta=0.0):
         c = np.array([-5.07631394e-24,  1.18051145e-20, -1.18759608e-17,  6.76116717e-15,

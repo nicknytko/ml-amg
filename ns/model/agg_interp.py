@@ -132,15 +132,16 @@ class MPNN(nn.Module):
         row = edge_index[0]
         col = edge_index[1]
 
-        # conv 1
+        # input convolution
         x = nnF.relu(self.node_conv_in(self.normalize_in(x), edge_index, abs(edge_attr))) + x
         edge_attr = nnF.relu(self.edge_conv_in(x[row], x[col], edge_attr.float())) + edge_attr
 
+        # middle convolutions
         for i in range(self.num_internal_conv):
             x = nnF.relu(self.node_convs[i](self.normalizations[i](x), edge_index, edge_attr)) + x
             edge_attr = nnF.relu(self.edge_convs[i](x[row], x[col], edge_attr.float())) + edge_attr
 
-        # conv 6
+        # output convolution
         x = self.node_activation(self.node_conv_out(self.normalize_out(x), edge_index, edge_attr))
         edge_attr = self.edge_activation(self.edge_conv_out(x[row], x[col], edge_attr.float()))
 
@@ -323,6 +324,33 @@ class FullAggNet(nn.Module):
         data_node_score = tg.data.Data(x=data_simple.x, edge_index=data_simple.edge_index, edge_attr=data_simple.edge_attr)
 
         return self.AggNet.all_intermediate_topk(data_node_score, k)
+
+    def int_only(self, A, Agg):
+        m, n = A.shape
+        agg_T = ns.lib.sparse.scipy_to_torch(Agg)
+        data = ns.model.data.graph_from_matrix(A, ns.lib.sparse_tensor.to_scipy(agg_T))
+        nodes, edges = self.PNet(data)
+        P_hat = torch.sparse_coo_tensor(data.edge_index, edges.squeeze(), (m, n)).coalesce()
+        P_T = torch.sparse.mm(P_hat, agg_T).coalesce()
+        return P_T
+
+    def agg_only(self, A, alpha):
+        m, n = A.shape
+        k = int(np.ceil(alpha * m))
+        data_simple = ns.model.data.graph_from_matrix_basic(A)
+
+        # Compute node scores
+        node_scores = self.AggNet(data_simple, k).squeeze()
+        top_k = torch.where(node_scores == 1)[0]
+
+        # Output Bellman-ford weights
+        BF_nodes, BF_edges = self.CNet(data_simple)
+        C_T = torch.sparse_coo_tensor(data_simple.edge_index, BF_edges.squeeze(), (m, n)).coalesce()
+
+        # Run Bellman-Ford to assign each node to an aggregate
+        distance, nearest_center = ns.lib.graph.modified_bellman_ford(C_T, top_k)
+        agg_T = ns.lib.graph.nearest_center_to_agg(top_k, nearest_center)
+        return agg_T
 
     def forward(self, A, alpha):
         '''

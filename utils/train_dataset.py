@@ -36,29 +36,61 @@ parser.add_argument('--start-generation', type=int, default=0, help='Initial gen
 parser.add_argument('--start-model', type=str, default=None, help='Initial generation (used for resuming training)')
 parser.add_argument('--strength-measure', default='abs', choices=common.strength_measure_funcs.keys())
 parser.add_argument('--greedy', default=False, type=common.parse_bool_str)
+parser.add_argument('--compute-test-loss', default=True, type=common.parse_bool_str)
+parser.add_argument('--batch-size', type=int, default=64)
+parser.add_argument('--loss-relative-measure', type=common.parse_bool_str, default=True)
+
 args = parser.parse_args()
 
 greedy = args.greedy
-train = ns.model.data.Grid.load_dir(os.path.join(args.system, 'train'))[:]
-test = ns.model.data.Grid.load_dir(os.path.join(args.system, 'test'))[:]
+
+# Use train/ and test/ dir if they exist in the system folder.  Otherwise, train=test=system
+train_dir = os.path.join(args.system, 'train')
+test_dir = os.path.join(args.system, 'test')
+if not os.path.exists(train_dir) or not os.path.exists(test_dir):
+    train_dir = args.system
+    test_dir = args.system
+
+train = ns.model.data.Grid.load_dir(train_dir)
+test = ns.model.data.Grid.load_dir(test_dir)
 print(len(train), len(test))
 
-model = ns.model.agg_interp.FullAggNet(64, num_conv=2, iterations=4)
+S = common.strength_measure_funcs[args.strength_measure]
+train_benchmark = common.evaluate_ref_conv(train, S, alpha=args.alpha)
 
-batch_size = 64
+if args.compute_test_loss:
+    test_benchmark = common.evaluate_ref_conv(test, S, alpha=args.alpha)
+else:
+    test_benchmark = train_benchmark
+
+model = ns.model.agg_interp.FullAggNet(64, num_conv=2, iterations=4)
+batch_size = args.batch_size
+
 def fitness(generation, weights, weights_idx):
     if greedy:
         rand = np.random.RandomState(generation)
         batch_indices = rand.choice(len(train), size=batch_size, replace=False)
         batch = [train[i] for i in batch_indices]
+        batch_ref_conv = train_benchmark[batch_indices]
     else:
         batch = train[::8]
-    return 1 - common.evaluate_dataset(weights, batch, model, alpha=args.alpha, gen=generation)
+        batch_ref_conv = train_benchmark[::8]
 
+    raw_conv = common.evaluate_dataset(weights, batch, model, alpha=args.alpha, gen=generation)
+
+    if args.loss_relative_measure:
+        return 1./np.average(raw_conv / batch_ref_conv)
+    else:
+        return 1./np.average(raw_conv)
 
 def compute_test_loss_batch(index, generation, weights):
     batch = [test[index]]
-    return common.evaluate_dataset(weights, batch, model, alpha=args.alpha, gen=generation)
+    raw_conv = common.evaluate_dataset(weights, batch, model, alpha=args.alpha, gen=generation).item()
+
+    if args.loss_relative_measure:
+        return raw_conv / test_benchmark[index]
+    else:
+        return raw_conv
 
 
 def compute_test_loss(ga_instance, generation, weights):
@@ -70,14 +102,38 @@ def compute_test_loss(ga_instance, generation, weights):
 def display_progress(ga_instance):
     weights, fitness, _ = ga_instance.best_solution()
     gen = ga_instance.num_generation
-    test_loss = compute_test_loss(ga_instance, gen, weights)
 
+    # Get training batch used
+    if greedy:
+        rand = np.random.RandomState(gen)
+        batch_indices = rand.choice(len(train), size=batch_size, replace=False)
+        batch = [train[i] for i in batch_indices]
+        batch_ref_conv = train_benchmark[batch_indices]
+    else:
+        batch = train[::8]
+        batch_ref_conv = train_benchmark[::8]
+
+    # Compute test loss
+    if args.compute_test_loss:
+        test_loss = compute_test_loss(ga_instance, gen, weights)
+    else:
+        test_loss = 1. / fitness
+
+    # Get benchmark loss
+    if args.loss_relative_measure:
+        lloyd_train = 1.
+        lloyd_test = 1.
+    else:
+        lloyd_train = np.average(batch_ref_conv)
+        lloyd_test = np.average(test_benchmark)
+
+    # Finally, output everything
     print(f'Generation = {gen}')
-    print(f'Train Loss = {1.0 - fitness}')
+    print(f'Train Loss = {1.0 / fitness}')
     print(f'Test Loss = {test_loss}')
 
-    writer.add_scalars('Loss/Train', {'ML': 1 - fitness, 'Lloyd/SA': train_benchmark}, gen)
-    writer.add_scalars('Loss/Test', {'ML': test_loss, 'Lloyd/SA': test_benchmark}, gen)
+    writer.add_scalars('Loss/Train', {'ML': 1/fitness, 'Lloyd': lloyd_train}, gen)
+    writer.add_scalars('Loss/Test', {'ML': test_loss, 'Lloyd': lloyd_test}, gen)
 
     model.load_state_dict(ns.ga.torch.model_weights_as_dict(model, weights))
     model.eval()
@@ -87,10 +143,8 @@ def display_progress(ga_instance):
 
 if __name__ == '__main__':
     writer = tensorboard.SummaryWriter('runs')
-
-    S = common.strength_measure_funcs[args.strength_measure]
-    train_benchmark = np.average(common.evaluate_ref_conv(train, S, alpha=args.alpha)); print(f'Evaluated train benchmark ({train_benchmark:.4f})')
-    test_benchmark = np.average(common.evaluate_ref_conv(test, S, alpha=args.alpha)); print(f'Evaluated test benchmark ({test_benchmark:.4f})')
+    print(f'Evaluated train benchmark ({np.average(train_benchmark):.4f})')
+    print(f'Evaluated test benchmark ({np.average(test_benchmark):.4f})')
 
     try:
         os.mkdir('models_chkpt')
