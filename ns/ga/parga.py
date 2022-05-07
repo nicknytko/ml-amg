@@ -57,13 +57,23 @@ class ParallelGA:
 
         # New population selection
         self.selection_to_use = kwargs.get('selection', 'steady_state')
-        if not self.selection_to_use in ['steady_state', 'roulette', 'greedy']:
-            raise RuntimeError(f'Unknown selection method: {self.selection_to_use}')
-        self.selection_method = {
-            'steady_state': self.steady_state_selection_crossover,
-            'roulette': self.roulette_selection_crossover,
-            'greedy': self.greedy_selection_crossover,
-        }[self.selection_to_use]
+        if callable(self.selection_to_use):
+            self.selection_method = lambda: self.selection_to_use(self)
+        else:
+            if not self.selection_to_use in ['steady_state', 'roulette', 'greedy']:
+                raise RuntimeError(f'Unknown selection method: {self.selection_to_use}')
+            self.selection_method = {
+                'steady_state': self.steady_state_selection_crossover,
+                'roulette': self.roulette_selection_crossover,
+                'greedy': self.greedy_selection_crossover,
+            }[self.selection_to_use]
+
+        # Mutation
+        mutation = kwargs.get('mutation', None)
+        if callable(mutation):
+            self.mutation = lambda: mutation(self)
+        else:
+            self.mutation = self.default_mutation
 
         self.num_generation = 0
 
@@ -179,14 +189,16 @@ class ParallelGA:
         self.population_computed_fitness[indices_to_replace] = False
 
 
-    def mutation(self):
+    def default_mutation(self):
+        new_children = np.where(self.population_computed_fitness == False)[0]
         for i, worker in enumerate(self.workers):
-            local_indices = np.arange(0, self.population_size)[i::self.num_workers]
+            local_indices = new_children[i::self.num_workers]
             local_population = self.population[local_indices]
             if len(local_indices) != 0:
                 worker.send_command(WorkerCommand.create(WorkerCommand.MUTATION,
                                                          population=local_population,
                                                          indices=local_indices,
+                                                         folds=self.model_folds,
                                                          mutation_probability=self.mutation_probability,
                                                          mutation_perturb=(self.mutation_min_perturb, self.mutation_max_perturb)))
             else:

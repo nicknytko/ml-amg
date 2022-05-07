@@ -17,7 +17,7 @@ def topk_vec(x, k):
     assert(len(x.shape) == 1)
 
     top_k = torch.argsort(x, descending=True)[:k]
-    top_k_vec = torch.zeros(x.shape)
+    top_k_vec = torch.zeros(x.shape, device=x.device)
     top_k_vec[top_k] = 1.0 # (n, 1), with 1.0 for cluster centers and 0.0 elsewhere
     return top_k_vec
 
@@ -148,17 +148,15 @@ class MPNN(nn.Module):
         return x, edge_attr
 
 
-class AggLayer(nn.Module):
+class AggBinarizationLayer(nn.Module):
     def __init__(self, dim, num_conv=6):
-        super(AggLayer, self).__init__()
+        super(AggBinarizationLayer, self).__init__()
         ncs = []
-        ecs = []
         fcs = []
         norms = []
 
         # Input -> Hidden
         ncs.append(tg.nn.TAGConv(1, dim))
-        # ecs.append(EdgeConvModel(dim, 1, 1, dim))
         fcs.append(
             nn.Sequential(
                 nn.Linear(dim, dim), nn.ReLU(),
@@ -173,7 +171,6 @@ class AggLayer(nn.Module):
         # Hidden -> Hidden
         for i in range(num_conv-2):
             ncs.append(tg.nn.TAGConv(dim, dim))
-            ecs.append(EdgeConvModel(dim, 1, 1, dim))
             fcs.append(
                 nn.Sequential(
                     nn.Linear(dim, dim), nn.ReLU(),
@@ -187,7 +184,6 @@ class AggLayer(nn.Module):
 
         # Hidden -> Output
         ncs.append(tg.nn.TAGConv(dim, dim))
-        # ecs.append(EdgeConvModel(1, 1, 1, dim))
         fcs.append(
             nn.Sequential(
                 nn.Linear(dim, dim), nn.ReLU(),
@@ -200,7 +196,6 @@ class AggLayer(nn.Module):
         norms.append(tg.nn.norm.InstanceNorm(dim))
 
         self.ncs = nn.ModuleList(ncs)
-        # self.ecs = nn.ModuleList(ecs)
         self.fcs = nn.ModuleList(fcs)
         self.norms = nn.ModuleList(norms)
         self.num_conv = num_conv
@@ -210,7 +205,6 @@ class AggLayer(nn.Module):
     def forward(self, x, edge_index, edge_attr, k):
         if len(x.shape) == 1:
             x = torch.unsqueeze(x, 1)
-        n = x.shape[0]
 
         for i in range(self.num_conv):
             x = self.norms[i](x)
@@ -241,7 +235,7 @@ class AggNet(nn.Module):
         super(AggNet, self).__init__()
         layers = []
         for i in range(iterations):
-            layers.append(AggLayer(dim, num_conv=num_conv))
+            layers.append(AggBinarizationLayer(dim, num_conv=num_conv))
         self.layers = nn.ModuleList(layers)
         self.num_iterations = iterations
 
@@ -300,6 +294,78 @@ class AggOnlyNet(nn.Module):
         return self.AggNet.all_intermediate_topk(data_node_score, k)
 
 
+class SocNet(nn.Module):
+    def __init__(self, dim, num_conv=4, input_edge_features=1):
+        super(SocNet, self).__init__()
+        assert(num_conv >= 2)
+
+        ncs = []
+        ecs = []
+        fcs = []
+        norms = []
+
+        # Input -> Hidden
+        norms.append(tg.nn.norm.InstanceNorm(1))
+        ncs.append(tg.nn.TAGConv(1, dim))
+        fcs.append(
+            nn.Sequential(
+                nn.Linear(dim, dim), nn.ReLU(),
+                nn.Linear(dim, dim), nn.ReLU(),
+                nn.Linear(dim, dim), nn.ReLU(),
+                nn.Linear(dim, dim), nn.ReLU()
+            )
+        )
+        ecs.append(EdgeConvModel(dim, 1, 1, dim))
+
+        # Hidden -> Hidden
+        for i in range(num_conv-2):
+            norms.append(tg.nn.norm.InstanceNorm(dim))
+            ncs.append(tg.nn.TAGConv(dim, dim))
+            fcs.append(
+                nn.Sequential(
+                    nn.Linear(dim, dim), nn.ReLU(),
+                    nn.Linear(dim, dim), nn.ReLU(),
+                    nn.Linear(dim, dim), nn.ReLU(),
+                    nn.Linear(dim, dim), nn.ReLU()
+                )
+            )
+            ecs.append(EdgeConvModel(dim, 1, 1, dim))
+
+        # Hidden -> Output
+        norms.append(tg.nn.norm.InstanceNorm(dim))
+        ncs.append(tg.nn.TAGConv(dim, dim))
+        fcs.append(
+            nn.Sequential(
+                nn.Linear(dim, dim), nn.ReLU(),
+                nn.Linear(dim, dim), nn.ReLU(),
+                nn.Linear(dim, dim), nn.ReLU(),
+                nn.Linear(dim, 1), nn.ReLU()
+            )
+        )
+        ecs.append(EdgeConvModel(1, 1, 1, dim))
+
+        self.ncs = nn.ModuleList(ncs)
+        self.fcs = nn.ModuleList(fcs)
+        self.ecs = nn.ModuleList(ecs)
+        self.norms = nn.ModuleList(norms)
+        self.num_conv = num_conv
+        self.dim = dim
+
+    def forward(self, D):
+        x, edge_index, edge_attr = D.x, D.edge_index, D.edge_attr
+        if len(x.shape) == 1:
+            x = torch.unsqueeze(x, 1)
+
+        for i in range(self.num_conv):
+            x = self.norms[i](x)
+            x = self.ncs[i](x, edge_index, edge_attr)
+            x = nnF.relu(x)
+            x = self.fcs[i](x)
+            edge_attr = nnF.relu(self.ecs[i](x, edge_index, edge_attr))
+
+        return x, edge_attr
+
+
 class FullAggNet(nn.Module):
     '''
     A model that outputs an interpolation operator for a matrix by internally
@@ -316,6 +382,7 @@ class FullAggNet(nn.Module):
         self.PNet = MPNN(dim, num_internal_conv=4, input_edge_features=2)
         self.AggNet = AggNet(dim, num_conv=num_conv, iterations=iterations)
         self.CNet = MPNN(dim, num_internal_conv=5)
+        # self.CNet = SocNet(dim, num_conv=5)
 
     def forward_intermediate_topk(self, A, alpha):
         m, n = A.shape
@@ -352,6 +419,16 @@ class FullAggNet(nn.Module):
         agg_T = ns.lib.graph.nearest_center_to_agg(top_k, nearest_center)
         return agg_T
 
+    def smoother(self, A, agg_T):
+        m, n = A.shape
+        data = ns.model.data.graph_from_matrix(A, ns.lib.sparse_tensor.to_scipy(agg_T.detach()))
+        nodes, edges = self.PNet(data)
+        return torch.sparse_coo_tensor(data.edge_index, edges.squeeze(), (m, n)).coalesce()
+
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
     def forward(self, A, alpha):
         '''
         Parameters
@@ -376,10 +453,11 @@ class FullAggNet(nn.Module):
         node_weights : torch.Tensor
           Value of each node when scoring is applied to pick centers.
         '''
+        import time
 
         m, n = A.shape
         k = int(np.ceil(alpha * m))
-        data_simple = ns.model.data.graph_from_matrix_basic(A)
+        data_simple = ns.model.data.graph_from_matrix_basic(A).to(self.device)
 
         # Compute node scores
         node_scores = self.AggNet(data_simple, k).squeeze()
@@ -387,17 +465,24 @@ class FullAggNet(nn.Module):
 
         # Output Bellman-ford weights
         BF_nodes, BF_edges = self.CNet(data_simple)
-        C_T = torch.sparse_coo_tensor(data_simple.edge_index, BF_edges.squeeze(), (m, n)).coalesce()
+        #C_T = torch.sparse_coo_tensor(data_simple.edge_index, BF_edges.squeeze(), (m, n)).coalesce()
+        edge_indices = data_simple.edge_index.cpu().numpy()
+        edge_weights = BF_edges.squeeze().cpu().numpy()
+        C = sp.coo_matrix((edge_weights, (edge_indices[0], edge_indices[1])), shape=(m, n))
+        C_T = ns.lib.sparse.scipy_to_torch(C)
 
         # Run Bellman-Ford to assign each node to an aggregate
-        distance, nearest_center = ns.lib.graph.modified_bellman_ford(C_T, top_k)
-        agg_T = ns.lib.graph.nearest_center_to_agg(top_k, nearest_center)
+        distance, nearest_center = pyamg.graph.bellman_ford(C, top_k.cpu().numpy())
+        agg_T = ns.lib.graph.nearest_center_to_agg(top_k, nearest_center).to(self.device)
 
         # Compute the smoother \hat{P}
-        data = ns.model.data.graph_from_matrix(A, ns.lib.sparse_tensor.to_scipy(agg_T.detach()))
+        t = time.time()
+        data = ns.model.data.graph_from_matrix(A, ns.lib.sparse_tensor.to_scipy(agg_T.detach())).to(self.device)
         nodes, edges = self.PNet(data)
-        P_hat = torch.sparse_coo_tensor(data.edge_index, edges.squeeze(), (m, n)).coalesce()
+        P_hat = torch.sparse_coo_tensor(data.edge_index, edges.squeeze(), (m, n), device=self.device).coalesce()
 
         # Now, form P := \hat{P} Agg.
+        t = time.time()
         P_T = torch.sparse.mm(P_hat, agg_T).coalesce()
+        torch.cuda.synchronize()
         return agg_T, P_T, C_T, top_k, node_scores

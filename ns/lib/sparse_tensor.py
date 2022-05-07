@@ -52,8 +52,8 @@ def diag(A):
     return d
 
 def to_scipy(T):
-    indices = np.array(T.indices())
-    coo =  sp.coo_matrix((np.array(T.values()),
+    indices = np.array(T.indices().cpu())
+    coo =  sp.coo_matrix((np.array(T.values().cpu()),
                          (indices[0], indices[1])),
                          shape=np.array(T.shape))
     return coo.tocsr()

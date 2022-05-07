@@ -50,7 +50,7 @@ def modified_bellman_ford(S_T, centers):
         if finished:
             break
 
-    return distance, nearest_center
+    return distance.to(centers.device), nearest_center.to(centers.device)
 
 
 def nearest_center_to_agg(top_k, nearest_center):
@@ -83,7 +83,74 @@ def nearest_center_to_agg(top_k, nearest_center):
         k_i = inv_top_k[c.item()]
         indices.append([i, k_i])
 
-    return torch.sparse_coo_tensor(torch.Tensor(indices).T, torch.ones(n), (n, m)).coalesce()
+    return torch.sparse_coo_tensor(torch.Tensor(indices).T, torch.ones(n), (n, m), device=top_k.device).coalesce()
+
+
+def num_connected_components(adj):
+    '''
+    Returns the number of connected components in some graph, given its adjacency matrix.
+
+    Parameters
+    ----------
+    adj : numpy.ndarray or scipy.sparse_matrix
+      Adjacency matrix of graph to compute connected components for
+
+    Returns
+    -------
+    num_components : integer
+      Number of connected components, where node u,v are connected for all u,v in the component
+    '''
+
+    n = adj.shape[0]
+    visited = np.zeros(n, dtype=bool)
+
+    def first_unvisited(visited):
+        return np.where(visited == False)[0][0]
+
+    num_bfs = 0
+    while not np.all(visited):
+        num_bfs += 1
+        stack = [first_unvisited(visited)]
+        while len(stack) > 0:
+            i = stack.pop()
+            visited[i] = True
+            neighbours = np.nonzero(adj[:,i])[0]
+            for n in neighbours:
+                if not visited[n]:
+                    stack.append(n)
+
+    return num_bfs
+
+
+def check_aggregates_connected(A, Agg):
+    '''
+    Checks that all aggregates in a tentative aggregation are composed of connected nodes.
+    I.e., nodes u,v in aggregate j can be reached for all u, v, j.
+
+    Parameters
+    ----------
+    A : scipy.sparse.csr_matrix
+      Connection matrix
+    Agg : scipy.sparse.csr_matrix
+      Tentative aggregate assignments
+
+    Returns
+    -------
+    is_connected: bool
+      If all aggregates are fully-connected.
+    '''
+
+    # Form A' with inter-aggregate connections removed
+    n, k = Agg.shape
+    Ap = []
+    for i in range(k):
+        R_i = sp.eye(n).tocsc()[:, Agg[:,i].nonzero()[0]]
+        Ap.append(R_i.T@A@R_i)
+    Ap = sp.block_diag(Ap)
+
+    # If all aggregates are connected, then the number of overall connected components in the graph
+    # should be equal to the number of aggregates
+    return (num_connected_components(Ap.tocsc()) == k)
 
 
 def lloyd_aggregation(C, ratio=0.03, distance='unit', maxiter=10, rand=None):

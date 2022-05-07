@@ -74,6 +74,55 @@ class Worker:
         return self.parent_pipe.recv()
 
 
+class DummySingleProcessPipeEnd:
+    def __init__(self, pipe, recv_buf, send_buf):
+        self.pipe = pipe
+        self.recv_buf = recv_buf
+        self.send_buf = send_buf
+
+    def recv(self):
+        if len(self.recv_buf) == 0:
+            raise RuntimeError('Cannot receive from empty pipe when running in single-threaded mode.')
+        return self.recv_buf.pop(0)
+
+    def send(self, data):
+        self.send_buf.append(data)
+
+
+class DummySingleProcessPipe:
+    def __init__(self):
+        self.buf_a = []
+        self.buf_b = []
+
+    def __new__(cls):
+        pipe = object.__new__(cls)
+        pipe.__init__()
+
+        return (DummySingleProcessPipeEnd(pipe, pipe.buf_a, pipe.buf_b),
+                DummySingleProcessPipeEnd(pipe, pipe.buf_b, pipe.buf_a))
+
+
+class DummySingleProcessWorker(Worker):
+    def __init__(self, ctx):
+        self.started = False
+        self.parent_pipe, self.child_pipe = DummySingleProcessPipe()
+
+    def start(self):
+        self.started = True
+
+    def finish(self):
+        pass
+
+    def send_command(self, cmd):
+        self.parent_pipe.send(cmd)
+
+    def receive(self):
+        self.parent_pipe.send(WorkerCommand.create(WorkerCommand.EXIT))
+        worker_process(self.child_pipe) # run worker code
+        self.parent_pipe.recv() # started command
+        return self.parent_pipe.recv() # return output
+
+
 class WorkerQueue:
     def __init__(self, num_workers):
         '''
@@ -84,7 +133,11 @@ class WorkerQueue:
         self.num_workers = num_workers
         self.workers = []
         for i in range(num_workers):
-            self.workers.append(Worker(self.mp_ctx))
+            if i == 0:
+                self.workers.append(DummySingleProcessWorker(self.mp_ctx))
+            else:
+                self.workers.append(Worker(self.mp_ctx))
+
         self.started = False
 
 
@@ -225,20 +278,34 @@ def worker_mutation(random, pipe, cmd):
     mutated = np.zeros(population.shape[0], bool)
     mutation_probability = cmd['mutation_probability']
     perturb_min, perturb_max = cmd['mutation_perturb']
+    folds = cmd['folds']
     C = population.shape[1]
+
+    mut_rand = np.random.RandomState(os.getpid() ^ random.randint(os.getpid()))
 
     # Have at least one mutation.  Numpy doesn't like when we send back an empty array.
     while not np.any(mutated):
         for i in range(population.shape[0]):
-            #p = random.rand()
-            to_mutate = random.choice([False, True], size=C, replace=True, p=[1-mutation_probability, mutation_probability])
-            if np.any(to_mutate):
-                mutations = (random.rand(np.sum(to_mutate)) * (perturb_max - perturb_min)) + perturb_min
-                population[i, to_mutate] += mutations
-                mutated[i] = True
-            # if p <= mutation_probability:
-            #     population[i] += (random.rand(C) * (perturb_max - perturb_min)) + perturb_min
-            #     mutated[i] = True
+            if folds is None:
+                # Non-folded mutation.  Mutate random subsets of the weights.
+                to_mutate = mut_rand.choice([False, True], size=C, replace=True, p=[1-mutation_probability, mutation_probability])
+                if np.any(to_mutate):
+                    #mutations = (mut_rand.rand(np.sum(to_mutate)) * (perturb_max - perturb_min)) + perturb_min
+                    mutations = mut_rand.normal(scale=min(abs(perturb_max), abs(perturb_min)), size=np.sum(to_mutate))
+                    population[i, to_mutate] += mutations
+                    mutated[i] = True
+            else:
+                # Folded mutation.  Randomly mutate an entire fold.
+                to_mutate = mut_rand.choice([False, True], size=len(folds), replace=True, p=[1-mutation_probability, mutation_probability])
+                for j, fold in enumerate(folds):
+                    if not to_mutate[j]:
+                        continue
+
+                    for rng in fold.ranges:
+                        low, high = rng.low, rng.high
+                        mutations = mut_rand.normal(scale=min(abs(perturb_max), abs(perturb_min)), size=high-low)
+                        population[i, low:high] += mutations
+                        mutated[i] = True
 
     # Only send back parts of the population we have mutated
     indices = indices[mutated]
@@ -263,9 +330,13 @@ def worker_process(pipe):
     '''
 
     # There may be some startup cost involved in creating the process
-    # (loading datasets, etc), so send a messgae when we've started
+    # (loading datasets, etc), so send a message when we've started
     pipe.send(WorkerCommand.create(WorkerCommand.STARTED))
-    random = np.random.RandomState(seed=os.getpid())
+
+    if multiprocessing.current_process().name == 'MainProcess':
+        random = np.random.RandomState()
+    else:
+        random = np.random.RandomState(seed=os.getpid())
 
     cmds = {
         WorkerCommand.NOOP: lambda r,p,c: p.send(WorkerCommand.create(WorkerCommand.NOOP)),

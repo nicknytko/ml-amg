@@ -4,7 +4,11 @@ import pyamg
 import scipy
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
+import ns.lib.sparse
 import warnings
+
+import torch
+import torch.linalg as tla
 
 def jacobi(A, b, x, Dinv=None, omega=0.666, nu=2):
     '''
@@ -37,6 +41,17 @@ def jacobi(A, b, x, Dinv=None, omega=0.666, nu=2):
     for i in range(nu):
         x += omega * Dinv @ b - omega * Dinv @ A @ x
     return x
+
+
+def jacobi_torch(A, b, x, Dinv=None, omega=0.666, nu=2):
+    if Dinv is None:
+        Dinv = ns.lib.sparse.get_diagonal(A)
+
+    for i in range(nu):
+        x += omega * (Dinv * b) - omega * Dinv * (A @ x)
+
+    return x
+
 
 def gauss_seidel(A, b, x, L=None, U=None, nu=2):
     '''
@@ -72,42 +87,14 @@ def gauss_seidel(A, b, x, L=None, U=None, nu=2):
         x = spla.spsolve_triangular(L, (b - U@x))
     return x
 
-# def sor(A, b, x, L=None, U=None, omega=1., nu=2):
-#     '''
-#     Successive over-relaxation iterative solver
 
-#     Parameters
-#     ----------
-#     A : numpy.ndarray, scipy.sparse.spmatrix
-#         n x n linear system to solve
-#     L : numpy.ndarray, scipy.sparse.spmatrix
-#         Lower triangular half of A
-#     U : numpy.ndarray, scipy.sparse.spmatrix
-#         Strict upper triangular half of A
-#     b : numpy.ndarray
-#         Length n right hand side to solve for
-#     x : numpy.ndarray
-#         Length n initial guess for solution
-#     omega : float
-#         Relaxation weight.  Omega > 1 over-relaxes, while omega < 1 under-relaxes.
-#     nu : integer
-#         Number of sweeps to perform
+def gauss_seidel_torch(A, b, x, L=None, U=None, nu=2):
+    if U is None:
+        U = ns.lib.sparse.triu(A, 1)
 
-#     Returns
-#     -------
-#     x : numpy.ndarray
-#         Length n approximation to solution
-#     '''
-
-#     if L is None:
-#         L = sp.tril(A)
-#     if U is None:
-#         U = sp.triu(A, k=1)
-
-#     for i in range(nu):
-#         x_gs = gauss_Seidel(A, b, x, L, U, nu=1)
-#         x = omega * x_gs + (1-omega) * x
-#     return x
+    for i in range(nu):
+        x = tla.solve_triangular(A, torch.unsqueeze(b - U@x, 0), upper=False).squeeze()
+    return x
 
 
 def smoothed_aggregation_jacobi(A, Agg):
@@ -210,10 +197,51 @@ def amg_2_v(A, P, b, x,
         if len(err) >= max_iter:
             break
 
-    try:
-        err_n = min(len(err) // 3, 10)
-        conv_factor = (err[-1] / err[-err_n]) ** (1/(err_n - 1))
-    except:
-        conv_factor = 0 # Divide by zero... assume it converged too quickly?
+    if len(err) != 1:
+        try:
+            err_n = min(len(err) // 3, 10)
+            conv_factor = (err[-1] / err[-err_n]) ** (1/(err_n - 1))
+        except:
+            conv_factor = 0 # Divide by zero... assume it converged too quickly?
+    else:
+        conv_factor = 0
 
     return x, conv_factor, err, len(err)
+
+
+def amg_2_v_torch(A, P, b, x,
+            pre_smoothing_steps=1,
+            post_smoothing_steps=1,
+            jacobi_weight=0.666,
+            error_tol=1e-10,
+            max_iter=20):
+    device = A.device
+    Dinv = 1./ns.lib.sparse.get_diagonal(A)
+    # U = ns.lib.sparse.triu(A, 1)
+    Pt = P.transpose(0, 1)
+    A_H = torch.sparse.mm(torch.sparse.mm(Pt, A), P).to_dense()
+    A_H_LU = torch.lu(A_H)
+
+    err = torch.zeros(max_iter).to(device)
+
+    for i in range(max_iter):
+        # pre-relaxation
+        x = jacobi_torch(A, b, x, Dinv, omega=jacobi_weight, nu=pre_smoothing_steps)
+        # x = gauss_seidel_torch(A, b, x, U, nu=pre_smoothing_steps)
+
+        # coarse-grid correction
+        r_H = torch.unsqueeze(Pt.matmul(b - A@x), 1)
+        e_H = torch.lu_solve(r_H, *A_H_LU)
+        x += P.matmul(e_H.squeeze())
+
+        # post-relaxation
+        x = jacobi_torch(A, b, x, Dinv, omega=jacobi_weight, nu=post_smoothing_steps)
+        # x = gauss_seidel_torch(A, b, x, U, nu=post_smoothing_steps)
+
+        # tolerance check
+        err[i] = tla.norm(x)
+        if err[i] < error_tol:
+            break
+
+    n_err = 2
+    return (err[i] / err[i-n_err]) ** (1/(n_err - 1))

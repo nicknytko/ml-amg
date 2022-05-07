@@ -43,7 +43,7 @@ def model_weights_as_vector(model, folds=None):
     # Finally, populate vector and folds assignment
     cur_spot = 0
     for name, weights in state_dict.items():
-        vector = weights.detach().numpy().flatten()
+        vector = weights.detach().cpu().numpy().flatten()
         n = len(vector)
 
         # Find fold and update index range
@@ -71,7 +71,7 @@ def model_weights_as_dict(model, weights_vector):
 
     state_dict = model.state_dict()
     cur_spot = 0
-    weights_vector = torch.Tensor(weights_vector)
+    weights_vector = torch.Tensor(weights_vector).to(model.device)
 
     for key in state_dict.keys():
         weights = state_dict[key].detach()
@@ -85,12 +85,12 @@ def model_weights_as_dict(model, weights_vector):
 
 
 class TorchGA:
-    def __init__(self, model, num_solutions, model_fold_names=None):
+    def __init__(self, model, num_solutions, model_fold_names=None, random_perturb=1.):
         self.model = model
         self.num_solutions = num_solutions
-        self.population_weights = self.create_population(model_fold_names)
+        self.population_weights = self.create_population(model_fold_names, random_perturb)
 
-    def create_population(self, model_fold_names):
+    def create_population(self, model_fold_names, random_perturb=1.):
         if model_fold_names is None:
             self.fold_names = list(self.model.state_dict().keys())
         else:
@@ -101,7 +101,7 @@ class TorchGA:
         net_population_weights = []
         net_population_weights.append(weights)
         for idx in range(self.num_solutions-1):
-            net_weights = weights + np.random.uniform(low=-1.0, high=1.0, size=weights.size)
+            net_weights = weights + np.random.uniform(low=-random_perturb, high=random_perturb, size=weights.size)
             net_population_weights.append(net_weights)
 
         return net_population_weights

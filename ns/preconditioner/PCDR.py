@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpy.linalg as la
 import ns.lib.petsc
+import traceback
 
 pcdr_iter = 0
 
@@ -32,7 +33,7 @@ class PCDR(PCBase):
         try:
             self._initialize(pc)
         except Exception as e:
-            print(e)
+            traceback.print_exc()
 
     def _initialize(self, pc):
         _, P = pc.getOperators()
@@ -40,13 +41,13 @@ class PCDR(PCBase):
         appctx = self.get_appctx(pc)
         fcp = appctx.get('form_compiler_parameters')
 
-        V = get_function_space(pc.getDM())
-        if len(V) == 1:
-            V = FunctionSpace(V.mesh(), V.ufl_element())
-        else:
-            V = MixedFunctionSpace([V_ for V_ in V])
-        test = TestFunction(V)
-        trial = TrialFunction(V)
+        # V = get_function_space(pc.getDM())
+        # if len(V) == 1:
+        #     V = FunctionSpace(V.mesh(), V.ufl_element())
+        # else:
+        #     V = MixedFunctionSpace([V_ for V_ in V])
+        # test = TestFunction(V)
+        # trial = TrialFunction(V)
 
         # Grab relevant options
         prefix = pc.getOptionsPrefix() + self._prefix
@@ -167,13 +168,13 @@ class PCDR(PCBase):
         try:
             self._assemble_Fp()
         except Exception as e:
-            print(e)
+            traceback.print_exc()
 
     def apply(self, pc, X, Y):
         try:
             self._apply(pc,X,Y)
         except Exception as e:
-            print(e)
+            traceback.print_exc()
 
     def _apply(self, pc, X, Y):
         MinvX, FMinvX, R2, R = self.workspace
@@ -181,10 +182,7 @@ class PCDR(PCBase):
         self.Mksp.solve(X, MinvX)
         self.Fp.petscmat.mult(MinvX, FMinvX)
         self.Kksp.solve(FMinvX, Y)
-
-        # Now add the reaction term
         self.Rksp.solve(X, R)
-        #self.Kksp.solve(X, R)
         Y.axpy(1.0, R)
 
     def applyTranspose(self, pc, X, Y):

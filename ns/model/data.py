@@ -36,7 +36,7 @@ def graph_from_matrix(A, agg_op):
 
     nx.set_edge_attributes(G, cluster_adj, 'cluster_adj')
     nx_data = tg.utils.from_networkx(G, None, ['weight', 'cluster_adj'])
-    return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=nx_data.edge_attr.float())
+    return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=abs(nx_data.edge_attr.float()))
 
 def graph_from_matrix_basic(A):
     n = A.shape[0]
@@ -50,7 +50,7 @@ def graph_from_matrix_basic(A):
 def graph_from_matrix_node_vals(A, x):
     G = nx.from_scipy_sparse_matrix(A, edge_attribute='weight', parallel_edges=False, create_using=nx.DiGraph)
     nx_data = tg.utils.from_networkx(G, None, ['weight'])
-    return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=abs(nx_data.edge_attr.float()))
+    return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=nx_data.edge_attr.float())
 
 def graph_from_matrix_node_vals_with_inv(A, x):
     G = nx.from_scipy_sparse_matrix(A, edge_attribute='weight', parallel_edges=False, create_using=nx.DiGraph)
@@ -61,7 +61,7 @@ def graph_from_matrix_node_vals_with_inv(A, x):
 
     nx.set_edge_attributes(G, invweight_dict, 'invweight')
     nx_data = tg.utils.from_networkx(G, None, ['weight', 'invweight'])
-    return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=abs(nx_data.edge_attr.float()))
+    return tg.data.Data(x=x, edge_index=nx_data.edge_index, edge_attr=nx_data.edge_attr.float())
 
 
 class Grid():
@@ -209,8 +209,13 @@ class Grid():
         if not '.grid' in fname:
             fname = fname + '.grid'
 
+        # Save A as the individual components of CSR matrix to be compatible
+        # with multiple scipy versions.
+        A = self.A.tocsr()
+        A = (A.data, A.indices, A.indptr)
+
         ns.lib.helpers.pickle_save_bz2(fname, {
-            'A': self.A,
+            'A': A,
             'x': self.x,
             'extra': self.extra
         })
@@ -223,7 +228,11 @@ class Grid():
         extra = loaded['extra'] if 'extra' in loaded else {}
         extra['filename'] = fname
 
-        return Grid(loaded['A'], loaded['x'], extra)
+        A = loaded['A']
+        if isinstance(A, tuple):
+            A = sp.csr_matrix(A)
+
+        return Grid(A, loaded['x'], extra)
 
     def load_dir(directory):
         grids = []

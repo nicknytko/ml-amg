@@ -22,6 +22,7 @@ import ns.lib.sparse
 import ns.lib.sparse_tensor
 import ns.lib.multigrid
 import ns.lib.graph
+import ns.lib.aggplot
 import ns.ga.parga
 import ns.ga.torch
 
@@ -40,11 +41,15 @@ parser.add_argument('--n', type=int, default=None, help='Size of the system.  In
 parser.add_argument('--max-generations', type=int, default=500, help='Maximum number of training generations')
 parser.add_argument('--initial-population-size', type=int, default=50, help='Initial population size')
 parser.add_argument('--alpha', type=float, default=None, help='Coarsening ratio for aggregation')
+parser.add_argument('--greedy', default=False, type=common.parse_bool_str)
+parser.add_argument('--start-model', type=str, default=None, help='Initial generation (used for resuming training)')
 args = parser.parse_args()
 
 N = args.n
 neumann_solve = False
 alpha = args.alpha
+
+greedy = args.greedy
 
 if os.path.exists(args.system):
     if alpha is None:
@@ -140,25 +145,8 @@ agg_v[Agg_roots] = 1.
 # Model
 model = ns.model.agg_interp.FullAggNet(64, num_conv=2, iterations=4)
 
-def print_mat_rows(P, round_digits=5):
-    if isinstance(P, torch.Tensor) and P.is_sparse:
-        P = P.to_dense().numpy()
-    else:
-        P = np.array(P.todense())
-    P = P / la.norm(P, ord=np.inf, axis=0)
-
-    for row in range(P.shape[0]):
-        p = np.array(P[row]).flatten()
-        s_ = '[ '
-        for p_i in p:
-            s = str(p_i)
-            if len(s) > round_digits+2:
-                s = s[:round_digits+2]
-            else:
-                s = s + (' ' * (round_digits+2 - len(s)))
-            s_ += s + ' '
-        s_ += ']'
-        print(s_)
+plot = None
+err_plot = None
 
 def compute_agg_and_p(weights, random):
     model.load_state_dict(ns.ga.torch.model_weights_as_dict(model, weights))
@@ -177,8 +165,10 @@ def loss_fcn(A, P_T):
     x = r.randn(A.shape[1])
     x /= la.norm(x, 2)
 
-    ret = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega)
-    return ret[1]
+    return ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega)[1]
+    # ret = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega, max_iter=1)
+    # return la.norm(ret[0], np.inf)
+    #return ret[1]
 
 def fitness(generation, weights, weights_idx):
     r = np.random.RandomState(seed=generation)
@@ -215,6 +205,7 @@ def plot_grid(agg, P, bf_weights, cluster_centers, node_scores):
     plt.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'y*', markersize=10)
     plt.gca().set_aspect('equal')
 
+
 def display_progress(ga_instance):
     weights = ga_instance.best_solution()
     gen = ga_instance.num_generation
@@ -228,35 +219,87 @@ def display_progress(ga_instance):
     print(f'Fitness    = {weights[1]}')
     print(f'Loss       = {loss}')
 
-    plt.clf()
-    plot_grid(agg, P, bf_weights, cluster_centers, node_scores)
-    plt.title(f'Generation {gen}, MLAMG, conv={loss:.4f}')
+    plot.clear()
+    plot.plot_agg_3d_voxel(grid, agg)
+    plot.set_title(f'Generation {gen}, ML AMG, conv={loss:.4f}')
 
-    plt.show()
-    plt.pause(1)
+    # err_plot.clear()
+    # b = np.zeros(A.shape[1])
+    # r = np.random.RandomState(seed=0)
+    # x = r.randn(A.shape[1])
+    # x /= la.norm(x, 2)
+    # u = ns.lib.multigrid.amg_2_v(A, ns.lib.sparse.torch_to_scipy(P), b, x, max_iter=10, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega)[0]
+    # err_plot.scatter3D(grid.x[:,0], grid.x[:,1], grid.x[:,2], c=np.abs(u), colorbar=True)
+    # err_plot.set_title('ML AMG error after 10 iterations')
+    # err_plot.set_xlabel('x')
+    # err_plot.set_ylabel('y')
+    # err_plot.set_zlabel('z')
 
     model.load_state_dict(pygad.torchga.model_weights_as_dict(model, weights[0]))
     model.eval()
+    torch.save(model.state_dict(), f'models_chkpt/model_{gen:03}')
 
 if __name__ == '__main__':
     baseline_conv = loss_fcn(A, ns.lib.sparse.to_torch_sparse(P_SA))
     print(f'Baseline convergence {baseline_conv:.4f}')
-    plt.ion()
-    plt.figure(figsize=figure_size)
-    plot_grid(Agg, P_SA, A, Agg_roots, torch.zeros(A.shape[0]))
-    plt.title(f'Baseline, conv={baseline_conv:.4f}')
-    plt.show()
-    plt.pause(1)
+
+    if args.start_model is not None:
+        model.load_state_dict(torch.load(args.start_model))
+        model.eval()
+
+    # plt.ion()
+    # plt.figure(figsize=figure_size)
+    # #plot_grid(Agg, P_SA, A, Agg_roots, torch.zeros(A.shape[0]))
+    # plot_agg_3d(grid, Agg)
+    # plt.title(f'Baseline, conv={baseline_conv:.4f}')
+    # plt.show()
+    # plt.pause(1)
+
+    plot_ref = ns.lib.aggplot.ThreadedPlot()
+    plot_ref.create_axes(projection='3d')
+    plot_ref.plot_agg_3d_voxel(grid, Agg)
+    plot_ref.set_title(f'Lloyd Aggregation, conv={baseline_conv:.4f}')
+
+    plot = ns.lib.aggplot.ThreadedPlot()
+    plot.create_axes(projection='3d')
+
+    # err_plot = ns.lib.aggplot.ThreadedPlot()
+    # err_plot.create_axes(projection='3d')
+
+    gs_err_plot = ns.lib.aggplot.ThreadedPlot()
+    gs_err_plot.create_axes(projection='3d')
+    uv = np.random.randn(n)
+    L = sp.tril(grid.A).tocsr()
+    U = sp.triu(grid.A, k=1).tocsr()
+    nu = 10
+    for i in range(nu):
+        uv = spla.spsolve_triangular(L, -U@uv)
+    #gs_err_plot.scatter3D(grid.x[:,0], grid.x[:,1], grid.x[:,2], c=np.abs(uv), colorbar=True)
+    gs_err_plot.plot_3d_grid_voxel(grid, np.abs(uv))
+    gs_err_plot.set_title('Gauss-Seidel error after 10 iterations')
+    gs_err_plot.set_xlabel('x')
+    gs_err_plot.set_ylabel('y')
+    gs_err_plot.set_zlabel('z')
 
     population = ns.ga.torch.TorchGA(model=model, num_solutions=args.initial_population_size)
     initial_population = population.population_weights
+
+    if greedy:
+        perturb_val = 0.1
+        selection='greedy'
+        mutation_prob = 1.0
+    else:
+        perturb_val = 1.0
+        selection='steady_state'
+        mutation_prob=0.5
 
     perturb_val = 1
     num_workers = 4
     ga_instance = ns.ga.parga.ParallelGA(initial_population=initial_population,
                                          fitness_func=fitness,
                                          crossover_probability=0.5,
-                                         mutation_probability=0.4,
+                                         selection=selection,
+                                         mutation_probability=mutation_prob,
                                          mutation_min_perturb=-perturb_val,
                                          mutation_max_perturb=perturb_val,
                                          steady_state_top_use=2./3.,
@@ -267,7 +310,10 @@ if __name__ == '__main__':
     display_progress(ga_instance)
 
     for i in range(args.max_generations):
-        ga_instance.iteration()
+        if greedy:
+            ga_instance.stochastic_iteration()
+        else:
+            ga_instance.iteration()
         display_progress(ga_instance)
 
     ga_instance.finish_workers()

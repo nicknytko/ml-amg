@@ -11,7 +11,7 @@ import sys
 sys.path.append('../')
 import ns.model.data
 
-N = 20
+N = 12
 
 mesh = UnitCubeMesh(N,N,N)
 V = FunctionSpace(mesh, 'CG', 1)
@@ -41,8 +41,8 @@ R = R_y@R_z
 
 #eps_x = 10.**np.random.uniform(-4,4)
 #eps_y = 10.**np.random.uniform(-4,4)
-eps_x = 1e-3
-eps_y = 1e3
+eps_x = 0.5
+eps_y = 1.5
 S = np.diag([eps_x, eps_y, 1.])
 
 print(f'Theta z {theta_z/np.pi:.3f}pi', ';', f'Theta y {theta_y/np.pi:.3f}pi')
@@ -109,7 +109,7 @@ ax.set_title('Assignment of nodes to aggregates')
 
 plt.show(block=True)
 
-G = ns.model.data.Grid(A, x=R_@xyz, extra={
+G = ns.model.data.Grid(A.tocsr(), x=R_@xyz, extra={
     'theta_z': theta_z,
     'theta_y': theta_y,
     'eps_x': eps_x,

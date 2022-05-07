@@ -35,6 +35,8 @@ positions = {}
 for node in graph.nodes:
     positions[node] = grid.x[node]
 
+print(grid.extra)
+
 if 'jumps' in grid.extra:
     J = grid.extra['jumps']
     print(J)

@@ -13,6 +13,8 @@ import pyamg
 import matplotlib.pyplot as plt
 import argparse
 import networkx as nx
+import traceback
+import time
 
 sys.path.append('../')
 import ns.model.agg_interp
@@ -36,13 +38,16 @@ parser.add_argument('--start-generation', type=int, default=0, help='Initial gen
 parser.add_argument('--start-model', type=str, default=None, help='Initial generation (used for resuming training)')
 parser.add_argument('--strength-measure', default='abs', choices=common.strength_measure_funcs.keys())
 parser.add_argument('--greedy', default=False, type=common.parse_bool_str)
+parser.add_argument('--batched', default=False, type=common.parse_bool_str)
 parser.add_argument('--compute-test-loss', default=True, type=common.parse_bool_str)
 parser.add_argument('--batch-size', type=int, default=64)
 parser.add_argument('--loss-relative-measure', type=common.parse_bool_str, default=True)
+parser.add_argument('--cuda', type=common.parse_bool_str, default=False)
 
 args = parser.parse_args()
 
 greedy = args.greedy
+batched = args.batched
 
 # Use train/ and test/ dir if they exist in the system folder.  Otherwise, train=test=system
 train_dir = os.path.join(args.system, 'train')
@@ -53,35 +58,80 @@ if not os.path.exists(train_dir) or not os.path.exists(test_dir):
 
 train = ns.model.data.Grid.load_dir(train_dir)
 test = ns.model.data.Grid.load_dir(test_dir)
-print(len(train), len(test))
 
 S = common.strength_measure_funcs[args.strength_measure]
-train_benchmark = common.evaluate_ref_conv(train, S, alpha=args.alpha)
+# train_benchmark = common.evaluate_ref_conv(train, S, alpha=args.alpha)
+train_benchmark = np.ones(len(train))
 
 if args.compute_test_loss:
-    test_benchmark = common.evaluate_ref_conv(test, S, alpha=args.alpha)
+    #test_benchmark = common.evaluate_ref_conv(test, S, alpha=args.alpha)
+    test_benchmark = np.ones(len(test))
 else:
     test_benchmark = train_benchmark
 
-model = ns.model.agg_interp.FullAggNet(64, num_conv=2, iterations=4)
+device = ('cuda' if args.cuda else 'cpu')
+model = ns.model.agg_interp.FullAggNet(64, num_conv=2, iterations=4).to(device)
 batch_size = args.batch_size
 
+
+def evaluate_dataset(weights, dataset, model=None, alpha=0.3, omega=2./3.):
+    model.load_state_dict(ns.ga.torch.model_weights_as_dict(model, weights))
+    model.eval()
+
+    conv = torch.zeros(len(dataset))
+    for i in range(len(dataset)):
+        A = dataset[i].A
+        if args.cuda:
+            A_T = ns.lib.sparse.scipy_to_torch(A).to(model.device)
+        n = A.shape[1]
+        b = np.zeros(n)
+
+        try:
+            with torch.no_grad():
+                agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
+                if not args.cuda:
+                    P = ns.lib.sparse.torch_to_scipy(P_T)
+        except Exception as e:
+            print(f'Could not evaluate grid {i}: {traceback.format_exc()}')
+            conv[i] = 1.0
+            continue
+
+        x = np.random.RandomState(0).randn(A.shape[1])
+        x /= la.norm(x, 2)
+        if args.cuda:
+            t = time.time()
+            b = torch.zeros(A.shape[1]).to(model.device)
+            x = torch.Tensor(x).to(model.device)
+            res = ns.lib.multigrid.amg_2_v_torch(A_T, P_T, b, x, error_tol=1e-6, jacobi_weight=omega)
+        else:
+            t = time.time()
+            b = np.zeros(A.shape[1])
+            res = ns.lib.multigrid.amg_2_v(A, P, b, x, error_tol=1e-6)[1]
+        conv[i] = res
+    conv[torch.isnan(conv)] = 1.
+    return conv
+
+
 def fitness(generation, weights, weights_idx):
-    if greedy:
-        rand = np.random.RandomState(generation)
-        batch_indices = rand.choice(len(train), size=batch_size, replace=False)
-        batch = [train[i] for i in batch_indices]
-        batch_ref_conv = train_benchmark[batch_indices]
+    if batched:
+        if batch_size < len(train):
+            rand = np.random.RandomState(generation)
+            batch_indices = rand.choice(len(train), size=batch_size, replace=False)
+            batch = [train[i] for i in batch_indices]
+            batch_ref_conv = train_benchmark[batch_indices]
+        else:
+            batch = train
+            batch_ref_conv = train_benchmark
     else:
         batch = train[::8]
         batch_ref_conv = train_benchmark[::8]
 
-    raw_conv = common.evaluate_dataset(weights, batch, model, alpha=args.alpha, gen=generation)
-
+    raw_conv = evaluate_dataset(weights, batch, model, alpha=args.alpha)
     if args.loss_relative_measure:
         return 1./np.average(raw_conv / batch_ref_conv)
     else:
         return 1./np.average(raw_conv)
+
 
 def compute_test_loss_batch(index, generation, weights):
     batch = [test[index]]
@@ -104,7 +154,7 @@ def display_progress(ga_instance):
     gen = ga_instance.num_generation
 
     # Get training batch used
-    if greedy:
+    if batched:
         rand = np.random.RandomState(gen)
         batch_indices = rand.choice(len(train), size=batch_size, replace=False)
         batch = [train[i] for i in batch_indices]
@@ -134,6 +184,8 @@ def display_progress(ga_instance):
 
     writer.add_scalars('Loss/Train', {'ML': 1/fitness, 'Lloyd': lloyd_train}, gen)
     writer.add_scalars('Loss/Test', {'ML': test_loss, 'Lloyd': lloyd_test}, gen)
+    writer.add_scalars('Population Training Loss', dict(zip(map(lambda x: str(x), range(ga_instance.population_size)),
+                                                            1./np.sort(ga_instance.population_fitness))), gen)
 
     model.load_state_dict(ns.ga.torch.model_weights_as_dict(model, weights))
     model.eval()
@@ -163,10 +215,11 @@ if __name__ == '__main__':
         selection='greedy'
         mutation_prob = 1.0
     else:
-        perturb_val = 1.0
+        perturb_val = 0.005
         selection='steady_state'
         mutation_prob=0.5
 
+    # workers = 1 if args.cuda else args.workers
     ga_instance = ns.ga.parga.ParallelGA(initial_population=initial_population,
                                          fitness_func=fitness,
                                          crossover_probability=0.5,
@@ -174,8 +227,8 @@ if __name__ == '__main__':
                                          mutation_probability=mutation_prob,
                                          mutation_min_perturb=-perturb_val,
                                          mutation_max_perturb=perturb_val,
-                                         steady_state_top_use=2./3.,
-                                         steady_state_bottom_discard=1./4.,
+                                         steady_state_top_use=1./2.,
+                                         steady_state_bottom_discard=1./2.,
                                          num_workers=args.workers,
                                          model_folds=population.folds)
     ga_instance.num_generation = args.start_generation
@@ -183,7 +236,7 @@ if __name__ == '__main__':
     display_progress(ga_instance)
 
     for i in range(args.max_generations):
-        if greedy:
+        if batched and batch_size < len(train):
             ga_instance.stochastic_iteration()
         else:
             ga_instance.iteration()
