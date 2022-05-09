@@ -31,7 +31,7 @@ import common
 parser = argparse.ArgumentParser(description='Demo of the aggregate-picking network')
 parser.add_argument('system', type=str, help='Problem in data folder to train on')
 parser.add_argument('--max-generations', type=int, default=500, help='Maximum number of training generations')
-parser.add_argument('--initial-population-size', type=int, default=20, help='Initial population size')
+parser.add_argument('--population-size', type=int, default=20, help='Initial population size')
 parser.add_argument('--alpha', type=float, default=0.1, help='Coarsening ratio for aggregation')
 parser.add_argument('--workers', type=int, default=3, help='Number of workers to use for parallel GA training')
 parser.add_argument('--start-generation', type=int, default=0, help='Initial generation (used for resuming training)')
@@ -72,7 +72,7 @@ else:
 device = ('cuda' if args.cuda else 'cpu')
 model = ns.model.agg_interp.FullAggNet(64, num_conv=2, iterations=4).to(device)
 batch_size = args.batch_size
-
+writer = None
 
 def evaluate_dataset(weights, dataset, model=None, alpha=0.3, omega=2./3.):
     model.load_state_dict(ns.ga.torch.model_weights_as_dict(model, weights))
@@ -193,7 +193,7 @@ def display_progress(ga_instance):
 
     cur_pop_fit = np.sort(1-ga_instance.population_fitness)
 
-if __name__ == '__main__':
+def main():
     writer = tensorboard.SummaryWriter('runs')
     print(f'Evaluated train benchmark ({np.average(train_benchmark):.4f})')
     print(f'Evaluated test benchmark ({np.average(test_benchmark):.4f})')
@@ -207,7 +207,7 @@ if __name__ == '__main__':
         model.load_state_dict(torch.load(args.start_model))
         model.eval()
 
-    population = ns.ga.torch.TorchGA(model=model, num_solutions=args.initial_population_size)#, model_fold_names=model_folds)
+    population = ns.ga.torch.TorchGA(model=model, num_solutions=args.population_size)
     initial_population = population.population_weights
 
     if greedy:
@@ -219,7 +219,6 @@ if __name__ == '__main__':
         selection='steady_state'
         mutation_prob=0.5
 
-    # workers = 1 if args.cuda else args.workers
     ga_instance = ns.ga.parga.ParallelGA(initial_population=initial_population,
                                          fitness_func=fitness,
                                          crossover_probability=0.5,
@@ -229,7 +228,7 @@ if __name__ == '__main__':
                                          mutation_max_perturb=perturb_val,
                                          steady_state_top_use=1./2.,
                                          steady_state_bottom_discard=1./2.,
-                                         num_workers=args.workers,
+                                         num_workers=ns.ga.parga.get_num_workers(args.workers),
                                          model_folds=population.folds)
     ga_instance.num_generation = args.start_generation
     ga_instance.start_workers()
@@ -243,3 +242,5 @@ if __name__ == '__main__':
         display_progress(ga_instance)
 
     ga_instance.finish_workers()
+
+ns.ga.parga.start_parallel_ga(main)

@@ -3,7 +3,12 @@ import enum
 import numpy as np
 import numpy.linalg as la
 import multiprocessing
+import abc
 
+import mpi4py
+mpi4py.rc.initialize = False
+mpi4py.rc.finalize = False
+import mpi4py.MPI
 
 class WorkerCommand(enum.Enum):
     EXIT = 0
@@ -20,23 +25,16 @@ class WorkerCommand(enum.Enum):
         return kwargs
 
 
-class Worker:
+class BaseWorker(abc.ABC):
     '''
     Representation of a child worker process.
     Has routines for sending and receiving data to the worker.
     '''
 
-    def __init__(self, ctx):
-        '''
-        Creates and starts a worker process.  Note that the process is transparently
-        started in the constructor, though start() should be called before anything
-        else is run.
-        '''
-        self.parent_pipe, self.child_pipe = multiprocessing.Pipe()
-        self.process = ctx.Process(target=worker_process, args=(self.child_pipe,))
-        self.process.start()
+    def __init__(self):
         self.started = False
-
+        self.parent_pipe = None
+        self.child_pipe = None
 
     def start(self):
         '''
@@ -52,20 +50,14 @@ class Worker:
             raise RuntimeError('Did not receive reply from worker!')
         self.started = True
 
-
     def finish(self):
         '''
         Closes the worker process
         '''
         self.send_command(WorkerCommand.create(WorkerCommand.EXIT))
 
-
     def send_command(self, cmd):
-        '''
-        Send a WorkerCommand to the worker process
-        '''
         self.parent_pipe.send(cmd)
-
 
     def receive(self):
         '''
@@ -74,7 +66,25 @@ class Worker:
         return self.parent_pipe.recv()
 
 
-class DummySingleProcessPipeEnd:
+class MultiprocessWorker(BaseWorker):
+    '''
+    A child worker process that runs in a separate process using Python multiprocessing.
+    '''
+
+    def __init__(self):
+        '''
+        Creates and starts a worker process.  Note that the process is transparently
+        started in the constructor, though start() should be called before anything
+        else is run.
+        '''
+        self.mp_ctx = multiprocessing.get_context('spawn')
+        self.parent_pipe, self.child_pipe = multiprocessing.Pipe()
+        self.process = self.mp_ctx.Process(target=worker_process, args=(self.child_pipe,))
+        self.process.start()
+        self.started = False
+
+
+class SingleProcessPipeEnd:
     def __init__(self, pipe, recv_buf, send_buf):
         self.pipe = pipe
         self.recv_buf = recv_buf
@@ -89,7 +99,7 @@ class DummySingleProcessPipeEnd:
         self.send_buf.append(data)
 
 
-class DummySingleProcessPipe:
+class SingleProcessPipe:
     def __init__(self):
         self.buf_a = []
         self.buf_b = []
@@ -98,14 +108,19 @@ class DummySingleProcessPipe:
         pipe = object.__new__(cls)
         pipe.__init__()
 
-        return (DummySingleProcessPipeEnd(pipe, pipe.buf_a, pipe.buf_b),
-                DummySingleProcessPipeEnd(pipe, pipe.buf_b, pipe.buf_a))
+        return (SingleProcessPipeEnd(pipe, pipe.buf_a, pipe.buf_b),
+                SingleProcessPipeEnd(pipe, pipe.buf_b, pipe.buf_a))
 
 
-class DummySingleProcessWorker(Worker):
-    def __init__(self, ctx):
+class SingleProcessWorker(BaseWorker):
+    '''
+    A worker process that runs in the same process/thread as the caller.
+    This queues up commands and runs them all when receive() is called.
+    '''
+
+    def __init__(self):
         self.started = False
-        self.parent_pipe, self.child_pipe = DummySingleProcessPipe()
+        self.parent_pipe, self.child_pipe = SingleProcessPipe()
 
     def start(self):
         self.started = True
@@ -123,21 +138,57 @@ class DummySingleProcessWorker(Worker):
         return self.parent_pipe.recv() # return output
 
 
+class MPIPipeEnd:
+    def __init__(self, pipe, this_idx, other_idx):
+        self.pipe = pipe
+        self.this_idx = this_idx
+        self.other_idx = other_idx
+
+    def recv(self):
+        return mpi4py.MPI.COMM_WORLD.recv(source=self.other_idx, tag=0)
+
+    def send(self, data):
+        return mpi4py.MPI.COMM_WORLD.send(data, dest=self.other_idx, tag=0)
+
+
+class MPIPipe:
+    def __init__(self, a_idx, b_idx):
+        self.a_idx = a_idx
+        self.b_idx = b_idx
+
+    def __new__(cls, a_idx, b_idx):
+        pipe = object.__new__(cls)
+        pipe.__init__(a_idx, b_idx)
+
+        return (MPIPipeEnd(pipe, a_idx, b_idx),
+                MPIPipeEnd(pipe, b_idx, a_idx))
+
+
+class MPIWorker(BaseWorker):
+    def __init__(self, idx):
+        self.started = False
+        self.parent_pipe, self.child_pipe = MPIPipe(0, idx)
+        # print('Rank', mpi4py.MPI.COMM_WORLD.Get_rank())
+        # print('Parent pipe', self.parent_pipe.send_idx, self.parent_pipe.recv_idx)
+        # print('Child pipe', self.child_pipe.send_idx, self.child_pipe.recv_idx)
+
+
 class WorkerQueue:
-    def __init__(self, num_workers):
+    def __init__(self, num_workers, mpi=False):
         '''
         Creates and transparently starts a queue of workers.
         '''
 
-        self.mp_ctx = multiprocessing.get_context('spawn')
         self.num_workers = num_workers
         self.workers = []
         for i in range(num_workers):
             if i == 0:
-                self.workers.append(DummySingleProcessWorker(self.mp_ctx))
+                self.workers.append(SingleProcessWorker())
             else:
-                self.workers.append(Worker(self.mp_ctx))
-
+                if mpi:
+                    self.workers.append(MPIWorker(i))
+                else:
+                    self.workers.append(MultiprocessWorker())
         self.started = False
 
 
