@@ -1,14 +1,9 @@
 import os
-import enum
 import numpy as np
 import numpy.linalg as la
-import multiprocessing
+import enum
 import abc
 
-import mpi4py
-mpi4py.rc.initialize = False
-mpi4py.rc.finalize = False
-import mpi4py.MPI
 
 class WorkerCommand(enum.Enum):
     EXIT = 0
@@ -18,7 +13,6 @@ class WorkerCommand(enum.Enum):
     CROSSOVER = 4
     MUTATION = 5
     MAP = 6
-
 
     def create(enum, **kwargs):
         kwargs['command'] = enum
@@ -66,181 +60,7 @@ class BaseWorker(abc.ABC):
         return self.parent_pipe.recv()
 
 
-class MultiprocessWorker(BaseWorker):
-    '''
-    A child worker process that runs in a separate process using Python multiprocessing.
-    '''
-
-    def __init__(self):
-        '''
-        Creates and starts a worker process.  Note that the process is transparently
-        started in the constructor, though start() should be called before anything
-        else is run.
-        '''
-        self.mp_ctx = multiprocessing.get_context('spawn')
-        self.parent_pipe, self.child_pipe = multiprocessing.Pipe()
-        self.process = self.mp_ctx.Process(target=worker_process, args=(self.child_pipe,))
-        self.process.start()
-        self.started = False
-
-
-class SingleProcessPipeEnd:
-    def __init__(self, pipe, recv_buf, send_buf):
-        self.pipe = pipe
-        self.recv_buf = recv_buf
-        self.send_buf = send_buf
-
-    def recv(self):
-        if len(self.recv_buf) == 0:
-            raise RuntimeError('Cannot receive from empty pipe when running in single-threaded mode.')
-        return self.recv_buf.pop(0)
-
-    def send(self, data):
-        self.send_buf.append(data)
-
-
-class SingleProcessPipe:
-    def __init__(self):
-        self.buf_a = []
-        self.buf_b = []
-
-    def __new__(cls):
-        pipe = object.__new__(cls)
-        pipe.__init__()
-
-        return (SingleProcessPipeEnd(pipe, pipe.buf_a, pipe.buf_b),
-                SingleProcessPipeEnd(pipe, pipe.buf_b, pipe.buf_a))
-
-
-class SingleProcessWorker(BaseWorker):
-    '''
-    A worker process that runs in the same process/thread as the caller.
-    This queues up commands and runs them all when receive() is called.
-    '''
-
-    def __init__(self):
-        self.started = False
-        self.parent_pipe, self.child_pipe = SingleProcessPipe()
-
-    def start(self):
-        self.started = True
-
-    def finish(self):
-        pass
-
-    def send_command(self, cmd):
-        self.parent_pipe.send(cmd)
-
-    def receive(self):
-        self.parent_pipe.send(WorkerCommand.create(WorkerCommand.EXIT))
-        worker_process(self.child_pipe) # run worker code
-        self.parent_pipe.recv() # started command
-        return self.parent_pipe.recv() # return output
-
-
-class MPIPipeEnd:
-    def __init__(self, pipe, this_idx, other_idx):
-        self.pipe = pipe
-        self.this_idx = this_idx
-        self.other_idx = other_idx
-
-    def recv(self):
-        return mpi4py.MPI.COMM_WORLD.recv(source=self.other_idx, tag=0)
-
-    def send(self, data):
-        return mpi4py.MPI.COMM_WORLD.send(data, dest=self.other_idx, tag=0)
-
-
-class MPIPipe:
-    def __init__(self, a_idx, b_idx):
-        self.a_idx = a_idx
-        self.b_idx = b_idx
-
-    def __new__(cls, a_idx, b_idx):
-        pipe = object.__new__(cls)
-        pipe.__init__(a_idx, b_idx)
-
-        return (MPIPipeEnd(pipe, a_idx, b_idx),
-                MPIPipeEnd(pipe, b_idx, a_idx))
-
-
-class MPIWorker(BaseWorker):
-    def __init__(self, idx):
-        self.started = False
-        self.parent_pipe, self.child_pipe = MPIPipe(0, idx)
-        # print('Rank', mpi4py.MPI.COMM_WORLD.Get_rank())
-        # print('Parent pipe', self.parent_pipe.send_idx, self.parent_pipe.recv_idx)
-        # print('Child pipe', self.child_pipe.send_idx, self.child_pipe.recv_idx)
-
-
-class WorkerQueue:
-    def __init__(self, num_workers, mpi=False):
-        '''
-        Creates and transparently starts a queue of workers.
-        '''
-
-        self.num_workers = num_workers
-        self.workers = []
-        for i in range(num_workers):
-            if i == 0:
-                self.workers.append(SingleProcessWorker())
-            else:
-                if mpi:
-                    self.workers.append(MPIWorker(i))
-                else:
-                    self.workers.append(MultiprocessWorker())
-        self.started = False
-
-
-    def __getitem__(self, key):
-        return self.workers[key]
-
-
-    def __len__(self):
-        return self.num_workers
-
-
-    def start(self):
-        '''
-        Wait for all workers to start.  This should be called before
-        any data is sent or received to a worker.
-        '''
-        if self.started:
-            return
-
-        for worker in self.workers:
-            worker.start()
-
-        self.started = True
-
-
-    def receive_all(self):
-        '''
-        Gathers data from all worker processes.
-
-        Returns
-        -------
-        data - python list
-          List of data, such that data[i] is what was received from worker i.
-        '''
-
-        data = []
-        for worker in self.workers:
-            data.append(worker.receive())
-        return data
-
-
-    def finish(self):
-        '''
-        Closes all workers in the queue, and frees associated resources.
-        '''
-
-        if not self.started:
-            raise RuntimeError('Cannot close WorkerQueue: not started')
-
-        for worker in self.workers:
-            worker.finish()
-
+#### TODO: Move these GA-specific commands to ns.ga and out of this file
 
 def worker_fitness(random, pipe, cmd):
     population = cmd['population']
@@ -291,7 +111,7 @@ def worker_crossover(random, pipe, cmd):
 
         # now, with probability p do some sort of crossover, otherwise use the parents directly
         p = random.rand()
-        if p <= crossover_probability:
+        if p < crossover_probability:
             if folds is None:
                 crossover_pt = random.randint(0, population.shape[1])
 
@@ -341,8 +161,8 @@ def worker_mutation(random, pipe, cmd):
                 # Non-folded mutation.  Mutate random subsets of the weights.
                 to_mutate = mut_rand.choice([False, True], size=C, replace=True, p=[1-mutation_probability, mutation_probability])
                 if np.any(to_mutate):
-                    #mutations = (mut_rand.rand(np.sum(to_mutate)) * (perturb_max - perturb_min)) + perturb_min
-                    mutations = mut_rand.normal(scale=min(abs(perturb_max), abs(perturb_min)), size=np.sum(to_mutate))
+                    mutations = (mut_rand.rand(np.sum(to_mutate)) * (perturb_max - perturb_min)) + perturb_min
+                    #mutations = mut_rand.normal(scale=min(abs(perturb_max), abs(perturb_min)), size=np.sum(to_mutate))
                     population[i, to_mutate] += mutations
                     mutated[i] = True
             else:
@@ -354,7 +174,8 @@ def worker_mutation(random, pipe, cmd):
 
                     for rng in fold.ranges:
                         low, high = rng.low, rng.high
-                        mutations = mut_rand.normal(scale=min(abs(perturb_max), abs(perturb_min)), size=high-low)
+                        #mutations = mut_rand.normal(scale=min(abs(perturb_max), abs(perturb_min)), size=high-low)
+                        mutations = (mut_rand.rand(high-low) * (perturb_max - perturb_min)) + perturb_min
                         population[i, low:high] += mutations
                         mutated[i] = True
 
@@ -383,11 +204,7 @@ def worker_process(pipe):
     # There may be some startup cost involved in creating the process
     # (loading datasets, etc), so send a message when we've started
     pipe.send(WorkerCommand.create(WorkerCommand.STARTED))
-
-    if multiprocessing.current_process().name == 'MainProcess':
-        random = np.random.RandomState()
-    else:
-        random = np.random.RandomState(seed=os.getpid())
+    random = np.random.RandomState(seed=os.getpid())
 
     cmds = {
         WorkerCommand.NOOP: lambda r,p,c: p.send(WorkerCommand.create(WorkerCommand.NOOP)),

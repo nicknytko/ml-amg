@@ -110,6 +110,13 @@ if 'theta' in extras[0] and 'epsilon' in extras[0]:
     plt.legend()
     plt.savefig(f'{prefix}_convergence_per_theta.pdf')
 
+def plot_loghist(x, bins):
+    # https://stackoverflow.com/questions/47850202/plotting-a-histogram-on-a-log-scale-with-matplotlib
+    hist, bins = np.histogram(x, bins=bins)
+    logbins = np.logspace(np.log10(bins[0]),np.log10(bins[-1]),len(bins))
+    plt.hist(x, bins=logbins)
+    plt.xscale('log')
+
 if 'theta_y' in extras[0] and 'theta_z' in extras[0]:
     theta_z = np.array(list(map(lambda x: x['theta_z'], extras)))
     theta_y = np.array(list(map(lambda x: x['theta_y'], extras)))
@@ -121,6 +128,10 @@ if 'theta_y' in extras[0] and 'theta_z' in extras[0]:
     eigs = np.column_stack((eps_x, eps_y, eps_z))
     cond = np.max(eigs, axis=1) / np.min(eigs, axis=1)
 
+    print(np.log10(cond))
+    line = (abs(4. - np.log10(cond)) < 0.2)
+    print(eigs[line], cond[line])
+
     plt.figure(figsize=figsize)
     plt.title(f'Convergence of Lloyd and ML vs Conditioning of Diffusion Tensor')
     plt.semilogx(cond, baseline, 'o', label='Lloyd Convergence')
@@ -130,3 +141,11 @@ if 'theta_y' in extras[0] and 'theta_z' in extras[0]:
     plt.grid()
     plt.legend()
     plt.savefig(f'{prefix}_convergence_per_cond.pdf')
+
+    plt.figure(figsize=figsize)
+    plot_loghist(cond, 15)
+    plt.title('Distribution of Problem Conditioning')
+    #plt.hist(cond)
+    plt.ylabel('Frequency')
+    plt.xlabel(r'$\left\|{\bf D}\right\|_2\left\|{\bf D}^{-1}\right\|_2$')
+    plt.savefig(f'{prefix}_cond_hist.pdf')

@@ -1,3 +1,18 @@
+import argparse
+
+def parse_bool_str(v):
+    v = v.lower()
+    if v == 't' or v == 'true':
+        return True
+    else:
+        return False
+
+parser = argparse.ArgumentParser(description='Creation of 3d diffusion data files (requires Firedrake)')
+parser.add_argument('--n-grids', type=int, default=1000, help='Number of grids to generate')
+parser.add_argument('--out-folder', type=str, default=None, help='Output directory to put grids')
+parser.add_argument('--anisotropic', type=parse_bool_str, default=True, help='If "true" will generate anisotropic problems.')
+args = parser.parse_args()
+
 import numpy as np
 from firedrake import *
 import matplotlib.pyplot as plt
@@ -7,23 +22,11 @@ import numpy.linalg as la
 import pyamg.aggregation
 import pyamg.strength
 import sys
-import argparse
 import os
 
 sys.path.append('../')
 from ns.model.data import Grid
 
-def parse_bool_str(v):
-    v = v.lower()
-    if v == 't' or v == 'true':
-        return True
-    else:
-        return False
-
-parser = argparse.ArgumentParser(description='Creation of diffusion data files')
-parser.add_argument('--n-grids', type=int, default=1000, help='Number of grids to generate')
-parser.add_argument('--out-folder', type=str, default=None, help='Output directory to put grids')
-args = parser.parse_args()
 
 os.makedirs(args.out_folder, exist_ok=True)
 print(args.out_folder)
@@ -75,10 +78,17 @@ def gen_aniso_laplace(Nx, Ny, Nz, theta_y, theta_z, eps_x, eps_y):
 
 for i in range(args.n_grids):
     N = np.random.randint(8, 15)
-    theta_z = np.random.uniform(0, 2*np.pi)
-    theta_y = np.random.uniform(0, 2*np.pi)
-    eps_x = 10. ** np.clip(np.random.normal(0., 3.), -4., 4.)
-    eps_y = 10. ** np.clip(np.random.normal(0., 3.), -4., 4.)
+
+    if args.anisotropic:
+        theta_z = np.random.uniform(0, 2*np.pi)
+        theta_y = np.random.uniform(0, 2*np.pi)
+        eps_x = 10. ** np.random.uniform(-4., 4.)
+        eps_y = 10. ** np.random.uniform(-4., 4.)
+    else:
+        theta_z = 0.
+        theta_y = 0.
+        eps_x = 1.
+        eps_y = 1.
 
     A, x = gen_aniso_laplace(N, N, N, theta_y, theta_z, eps_x, eps_y)
     G = Grid(A, x=x, extra={

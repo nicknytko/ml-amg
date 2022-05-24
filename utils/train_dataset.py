@@ -25,6 +25,7 @@ import ns.lib.multigrid
 import ns.lib.graph
 import ns.ga.parga
 import ns.ga.torch
+import ns.parallel.pool
 
 import common
 
@@ -43,6 +44,7 @@ parser.add_argument('--compute-test-loss', default=True, type=common.parse_bool_
 parser.add_argument('--batch-size', type=int, default=64)
 parser.add_argument('--loss-relative-measure', type=common.parse_bool_str, default=True)
 parser.add_argument('--cuda', type=common.parse_bool_str, default=False)
+parser.add_argument('--evaluate-bench-loss', type=common.parse_bool_str, default=True)
 
 args = parser.parse_args()
 
@@ -59,20 +61,16 @@ if not os.path.exists(train_dir) or not os.path.exists(test_dir):
 train = ns.model.data.Grid.load_dir(train_dir)
 test = ns.model.data.Grid.load_dir(test_dir)
 
+# Benchmark loss -- initialized to dummy values for now
 S = common.strength_measure_funcs[args.strength_measure]
-# train_benchmark = common.evaluate_ref_conv(train, S, alpha=args.alpha)
 train_benchmark = np.ones(len(train))
-
-if args.compute_test_loss:
-    #test_benchmark = common.evaluate_ref_conv(test, S, alpha=args.alpha)
-    test_benchmark = np.ones(len(test))
-else:
-    test_benchmark = train_benchmark
+test_benchmark = train_benchmark
 
 device = ('cuda' if args.cuda else 'cpu')
 model = ns.model.agg_interp.FullAggNet(64, num_conv=2, iterations=4).to(device)
 batch_size = args.batch_size
 writer = None
+
 
 def evaluate_dataset(weights, dataset, model=None, alpha=0.3, omega=2./3.):
     model.load_state_dict(ns.ga.torch.model_weights_as_dict(model, weights))
@@ -149,7 +147,21 @@ def compute_test_loss(ga_instance, generation, weights):
     return convs
 
 
+def compute_ref_loss_batch(index, ds):
+    global S
+    ds = (train if ds==1 else test)
+    batch = [ds[index]]
+    return common.evaluate_ref_conv(batch, S, alpha=args.alpha).item()
+
+
+def compute_ref_loss(pool, ds='train'):
+    ds = (1 if ds=='train' else 0)
+    ds_len = (len(train) if ds==1 else len(test))
+    return np.array(pool.map(np.arange(ds_len), compute_ref_loss_batch, extra_args=(ds, )))
+
+
 def display_progress(ga_instance):
+    global writer
     weights, fitness, _ = ga_instance.best_solution()
     gen = ga_instance.num_generation
 
@@ -193,25 +205,38 @@ def display_progress(ga_instance):
 
     cur_pop_fit = np.sort(1-ga_instance.population_fitness)
 
-def main():
+
+with ns.parallel.pool.WorkerPool(args.workers) as pool:
     writer = tensorboard.SummaryWriter('runs')
+
+    # Compute benchmark Lloyd loss
+    if args.evaluate_bench_loss:
+        train_benchmark = compute_ref_loss(pool, 'train')
+        if args.compute_test_loss:
+            test_benchmark = compute_ref_loss(pool, 'test')
+        else:
+            test_benchmark = train_benchmark
     print(f'Evaluated train benchmark ({np.average(train_benchmark):.4f})')
     print(f'Evaluated test benchmark ({np.average(test_benchmark):.4f})')
 
+    # Create model checkpoint folder
     try:
         os.mkdir('models_chkpt')
     except:
         pass
 
+    # Load starting model if we have one specified
     if args.start_model is not None:
         model.load_state_dict(torch.load(args.start_model))
         model.eval()
 
+    # Seed our population
     population = ns.ga.torch.TorchGA(model=model, num_solutions=args.population_size)
     initial_population = population.population_weights
 
+    # Specify parameters for GA
     if greedy:
-        perturb_val = 0.1
+        perturb_val = 1.0
         selection='greedy'
         mutation_prob = 1.0
     else:
@@ -221,17 +246,16 @@ def main():
 
     ga_instance = ns.ga.parga.ParallelGA(initial_population=initial_population,
                                          fitness_func=fitness,
-                                         crossover_probability=0.5,
+                                         crossover_probability=0.0,
                                          selection=selection,
                                          mutation_probability=mutation_prob,
                                          mutation_min_perturb=-perturb_val,
                                          mutation_max_perturb=perturb_val,
                                          steady_state_top_use=1./2.,
                                          steady_state_bottom_discard=1./2.,
-                                         num_workers=ns.ga.parga.get_num_workers(args.workers),
+                                         worker_pool=pool,
                                          model_folds=population.folds)
     ga_instance.num_generation = args.start_generation
-    ga_instance.start_workers()
     display_progress(ga_instance)
 
     for i in range(args.max_generations):
@@ -240,7 +264,3 @@ def main():
         else:
             ga_instance.iteration()
         display_progress(ga_instance)
-
-    ga_instance.finish_workers()
-
-ns.ga.parga.start_parallel_ga(main)

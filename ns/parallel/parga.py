@@ -1,5 +1,53 @@
 import numpy as np
-from ns.parallel.worker import *
+from ns.ga.worker import *
+from datetime import datetime
+import mpi4py.MPI
+import multiprocessing
+import sys
+
+
+def _is_mp_subprocess():
+    frame = sys._getframe()
+    while frame.f_back is not None:
+        if frame.f_globals['__name__'] == '__mp_main__':
+            return True
+        frame = frame.f_back
+    return False
+
+
+_running_mpi = None
+def start_parallel_ga(entry_pt):
+    global _running_mpi
+
+    mpi4py.MPI.Init()
+    if mpi4py.MPI.COMM_WORLD.Get_size() <= 1:
+        # If there is only one MPI process then we're likely running w/ standard multiprocessing
+        _running_mpi = False
+        mpi4py.MPI.Finalize()
+        if not _is_mp_subprocess():
+            entry_pt()
+    else:
+        _running_mpi = True
+
+        # If we're running MPI, then start the main process as usual and manually enter the worker
+        # loop on auxiliary processes
+        rank = mpi4py.MPI.COMM_WORLD.Get_rank()
+        if rank == 0:
+            entry_pt()
+        else:
+            worker_process(MPIPipeEnd(None, rank, 0))
+        mpi4py.MPI.Finalize()
+
+
+def running_mpi():
+    return _running_mpi
+
+
+def get_num_workers(default):
+    if _running_mpi:
+        return mpi4py.MPI.COMM_WORLD.Get_size()
+    else:
+        return default
 
 
 class ParallelGA:
@@ -76,8 +124,8 @@ class ParallelGA:
 
         self.num_generation = 0
 
-        self.workers = kwargs.get('worker_pool')
-        self.num_workers = len(self.workers)
+        self.num_workers = kwargs.get('num_workers', 2)
+        self.workers = WorkerQueue(self.num_workers, mpi=running_mpi())
 
 
     def compute_fitness(self):
@@ -285,4 +333,38 @@ class ParallelGA:
 
 
     def parallel_map(self, iterable, function, extra_args):
-        return self.workers.map(iterable, function, extra_args)
+        output = [None]*len(iterable)
+
+        for i, worker in enumerate(self.workers):
+            local_iterable = iterable[i::self.num_workers]
+            if len(local_iterable) != 0:
+                worker.send_command(WorkerCommand.create(WorkerCommand.MAP,
+                                                         iterable=local_iterable,
+                                                         function=function,
+                                                         worker_idx=i,
+                                                         args=extra_args))
+            else:
+                worker.send_command(WorkerCommand.create(WorkerCommand.NOOP))
+
+        # Now, assemble data we get back from the workers
+        data = self.workers.receive_all()
+        for datum in data:
+            if datum['command'] == WorkerCommand.NOOP:
+                continue
+            output[datum['worker_idx']::self.num_workers] = datum['output']
+
+        return output
+
+
+    def start_workers(self):
+        '''
+        Launches all worker processes.  Should be called before iteration()
+        '''
+        self.workers.start()
+
+
+    def finish_workers(self):
+        '''
+        Shuts down all worker processes.  Should be called after finishing training.
+        '''
+        self.workers.finish()
