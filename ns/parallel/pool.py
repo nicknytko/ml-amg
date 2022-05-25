@@ -5,8 +5,7 @@ import ns.parallel.single_process
 import ns.parallel.multiprocess
 import ns.parallel.mpi
 
-from ns.parallel.worker import WorkerCommand
-
+from ns.parallel.worker import WorkerCommand, worker_process
 
 class WorkerPool:
     '''
@@ -56,6 +55,7 @@ class WorkerPool:
             self.num_workers = ns.parallel.mpi.mpi_get_num_workers()
             self.mpi_enabled = True
             rank = ns.parallel.mpi.mpi_rank()
+            print('Starting on rank', rank)
 
             # Enter the worker loop if we aren't the main process
             if rank != 0:
@@ -63,6 +63,7 @@ class WorkerPool:
                 try:
                     worker_process(ns.parallel.mpi.MPIPipeEnd(None, rank, 0))
                 finally:
+                    ns.parallel.mpi.mpi_finalize()
                     sys.exit(0)
         elif ns.parallel.multiprocess.mp_is_subprocess():
             self.is_main = False

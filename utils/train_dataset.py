@@ -236,7 +236,7 @@ with ns.parallel.pool.WorkerPool(args.workers) as pool:
 
     # Specify parameters for GA
     if greedy:
-        perturb_val = 1.0
+        perturb_val = 0.5
         selection='greedy'
         mutation_prob = 1.0
     else:
