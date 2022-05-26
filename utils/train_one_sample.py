@@ -166,9 +166,6 @@ def loss_fcn(A, P_T):
     x /= la.norm(x, 2)
 
     return ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega)[1]
-    # ret = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-10, singular=neumann_solve, jacobi_weight=omega, max_iter=1)
-    # return la.norm(ret[0], np.inf)
-    #return ret[1]
 
 def fitness(generation, weights, weights_idx):
     r = np.random.RandomState(seed=generation)
@@ -235,7 +232,7 @@ def display_progress(ga_instance):
     # err_plot.set_ylabel('y')
     # err_plot.set_zlabel('z')
 
-    model.load_state_dict(pygad.torchga.model_weights_as_dict(model, weights[0]))
+    model.load_state_dict(ns.ga.torch.model_weights_as_dict(model, weights))
     model.eval()
     torch.save(model.state_dict(), f'models_chkpt/model_{gen:03}')
 

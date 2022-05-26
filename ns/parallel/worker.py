@@ -191,7 +191,10 @@ def worker_mutation(random, pipe, cmd):
 def worker_map(random, pipe, cmd):
     iterable = cmd['iterable']
     f = cmd['function']
-    output = [f(i, *cmd['args']) for i in iterable]
+    if cmd['args'] is not None:
+        output = [f(i, *cmd['args']) for i in iterable]
+    else:
+        output = [f(i) for i in iterable]
     pipe.send(WorkerCommand.create(WorkerCommand.MAP, output=output, worker_idx=cmd['worker_idx']))
 
 

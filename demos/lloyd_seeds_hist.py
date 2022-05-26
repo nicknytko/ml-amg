@@ -9,10 +9,9 @@ import pyamg
 import matplotlib
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-import pygad
-import pygad.torchga
 import argparse
 import networkx as nx
+import pickle
 
 sys.path.append('../')
 import ns.model.agg_interp
@@ -22,6 +21,8 @@ import ns.lib.sparse_tensor
 import ns.lib.multigrid
 import ns.lib.graph
 import utils.common as common
+
+import ns.parallel.pool
 
 def parse_bool_str(v):
     v = v.lower()
@@ -35,6 +36,8 @@ parser.add_argument('system', type=str, help='Problem selection to run demo on')
 parser.add_argument('--n', type=int, default=1000, help='How many different seeds to try')
 parser.add_argument('--alpha', type=float, default=None, help='Coarsening ratio for aggregation')
 parser.add_argument('--strength-measure', default='olson', choices=common.strength_measure_funcs.keys())
+parser.add_argument('--workers', type=int, default=8, help='Number of worker processes to use')
+parser.add_argument('--outfile', type=str, default='lloyd_hist.pkl', help='Output file to store convergence data into')
 args = parser.parse_args()
 
 N = args.n
@@ -50,23 +53,16 @@ if os.path.exists(args.system):
 
     np.random.seed(0)
     C = common.strength_measure_funcs[args.strength_measure](A)
-    #Agg, Agg_roots, Agg_seeds = ns.lib.graph.lloyd_aggregation(C, ratio=alpha, distance='same')
-
-    #_, dumb_centers = ns.lib.graph.modified_bellman_ford(ns.lib.sparse.scipy_to_torch(C), torch.Tensor(Agg_seeds).long())
-    #Agg_dumb = ns.lib.sparse.torch_to_scipy(ns.lib.graph.nearest_center_to_agg(torch.Tensor(Agg_seeds).long(), dumb_centers))
 else:
     print(f'Unknown system {args.system}')
     exit(1)
-
-np.random.seed()
 
 # Set up Jacobi smoother
 Dinv = sp.diags([1.0 / A.diagonal()], [0])
 omega = (4. / 3.) / np.abs(spla.eigs(Dinv @ A, k=1, return_eigenvectors=False)).item()
 smoother = (sp.eye(n) - omega*Dinv@A)
 
-convs = np.zeros(N)
-for i in range(N):
+def solve(i):
     Agg, Agg_roots, Agg_seeds = ns.lib.graph.lloyd_aggregation(C, ratio=alpha, distance='same', rand=i)
     _, dumb_centers = ns.lib.graph.modified_bellman_ford(ns.lib.sparse.scipy_to_torch(C), torch.Tensor(Agg_seeds).long())
     Agg_dumb = ns.lib.sparse.torch_to_scipy(ns.lib.graph.nearest_center_to_agg(torch.Tensor(Agg_seeds).long(), dumb_centers))
@@ -76,7 +72,24 @@ for i in range(N):
     x /= la.norm(x, 2)
 
     b = np.zeros(n)
-    convs[i] = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-6, singular=neumann_solve, jacobi_weight=omega)[1]
-    print(i, convs[i])
+    conv = ns.lib.multigrid.amg_2_v(A, P, b, x, res_tol=1e-6, singular=neumann_solve, jacobi_weight=omega)[1]
+    print(i, conv)
+    return conv
 
-np.save('lloyd_hist', convs)
+with ns.parallel.pool.WorkerPool(args.workers) as pool:
+    print(f'Using {len(pool)} workers')
+    convs = np.array(pool.map(N, solve))
+
+    # Read existing data if it exists
+    if os.path.exists(args.outfile):
+        with open(args.outfile, 'rb') as f:
+            data = pickle.load(f)
+    else:
+        data = {}
+
+    data[args.alpha] = convs
+
+    # Save everything back to the pickled fiole
+    print(list(data.keys()))
+    with open(args.outfile, 'wb') as f:
+        pickle.dump(data, f)

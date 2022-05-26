@@ -16,8 +16,6 @@ import scipy.spatial as spat
 import pyamg.gallery.mesh
 import pyamg.gallery.fem
 
-import shapely.geometry as sg
-from shapely.ops import unary_union
 import ns.lib.sparse
 import ns.lib.helpers
 
@@ -162,6 +160,8 @@ class Grid():
         lw : float
           line width of the aggregate edges
         '''
+        import shapely.geometry as sg
+        from shapely.ops import unary_union
 
         if ax is None:
             ax = plt.gca()

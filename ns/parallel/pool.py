@@ -55,7 +55,6 @@ class WorkerPool:
             self.num_workers = ns.parallel.mpi.mpi_get_num_workers()
             self.mpi_enabled = True
             rank = ns.parallel.mpi.mpi_rank()
-            print('Starting on rank', rank)
 
             # Enter the worker loop if we aren't the main process
             if rank != 0:
@@ -137,7 +136,33 @@ class WorkerPool:
         return (type is None or type == WorkerPool.NotMainProcess)
 
 
-    def map(self, iterable, function, extra_args):
+    def map(self, iterable, function, extra_args=None):
+        '''
+        Maps an iterable object onto a function, returning a list.
+
+        Parameters
+        ----------
+        iterable : iterable
+          An object that can be iterated through, for example a list, numpy array,
+          or a tuple.
+        function : callable
+          A function of the form:
+
+          f(x_i, *extra_args)
+
+          where x_i is the current iterable element and *extra_args are any arguments
+          specified in extra_args.
+        extra_args : tuple
+          Any extra arguments that should be passed to 'function'
+
+        Returns
+        -------
+        mapped_iterable : list
+          A list where every element is the return of 'function', i.e. of the form
+          [ f(iterable[0], *extra_args), f(iterable[1], *extra_args), ... ]
+        '''
+        if isinstance(iterable, int):
+            iterable = range(iterable)
         output = [None]*len(iterable)
 
         for i, worker in enumerate(self.workers):
