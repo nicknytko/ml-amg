@@ -124,21 +124,21 @@ with ns.parallel.pool.WorkerPool(args.workers) as pool:
     baseline = compute_test_loss(pool, ds, method='dumb')
     print(f'done in {time.time() - start:.3f} seconds')
     baseline_avg = np.average(baseline)
-    print('Baseline avg', baseline_avg)
+    print(f'Baseline: avg {baseline_avg:.3f} std {np.std(baseline):.3f}')
 
     print('Computing Lloyd, SA...')
     start = time.time()
     lloyd = compute_test_loss(pool, ds, method='lloyd')
     print(f'done in {time.time() - start:.3f} seconds')
     lloyd_avg = np.average(lloyd)
-    print('Lloyd avg', lloyd_avg)
+    print(f'Lloyd: avg {lloyd_avg:.3f} std {np.std(lloyd):.3f}')
 
     print('Computing ML...')
     start = time.time()
     ml = compute_test_loss(pool, ds, method='ml')
     print(f'done in {time.time() - start:.3f} seconds')
     ml_avg = np.average(ml)
-    print('ML avg', ml_avg)
+    print(f'ML: avg {ml_avg:.3f} std {np.std(ml):.3f}')
 
     print(np.where(np.logical_and(ml > 0.93, lloyd > 0.93))[0])
 

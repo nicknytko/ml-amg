@@ -7,6 +7,8 @@ import scipy.sparse.linalg as spla
 import ns.lib.sparse
 import warnings
 
+import pyamg.relaxation.relaxation
+
 import torch
 import torch.linalg as tla
 
@@ -143,7 +145,7 @@ def amg_2_v(A, P, b, x,
         approximate solution to the system
     conv_factor : float
         convergence factor, approximate to how much error is "dissipated" at each iteration
-    err : array
+    err : np.ndarray
         history of residuals or errors, depending on which tolerance is set
     num_iterations : int
         number of iterations completed until convergence
@@ -155,7 +157,7 @@ def amg_2_v(A, P, b, x,
     else:
         tol = res_tol if res_tol is not None else error_tol
 
-    err = []
+    err = np.zeros(max_iter)
     L = sp.tril(A).tocsr()
     U = sp.triu(A, k=1).tocsr()
     n = A.shape[0]
@@ -166,12 +168,12 @@ def amg_2_v(A, P, b, x,
             A_H_LU = spla.factorized(A_H)
         except:
             return x, np.float64(1.), err, 0
+    x = x.copy()
 
-    while True:
-        x = x.copy()
-
+    for i in range(max_iter):
         # Pre-relaxation
-        x = gauss_seidel(A, b, x, L, U, nu=pre_smoothing_steps)
+        pyamg.relaxation.relaxation.gauss_seidel(A, x, b, iterations=pre_smoothing_steps)
+
         # Coarse-grid correction
         if singular:
             x += P @ spla.lsqr(P.T@A@P, P.T@(b - A@x))[0]
@@ -179,7 +181,7 @@ def amg_2_v(A, P, b, x,
             x += P @ A_H_LU(P.T@(b - A@x))
 
         # Post-relaxation
-        x = gauss_seidel(A, b, x, L, U, nu=post_smoothing_steps)
+        pyamg.relaxation.relaxation.gauss_seidel(A, x, b, iterations=post_smoothing_steps)
         # Normalize with zero mean for singular systems w/ constant nullspace
         if singular:
             x -= np.mean(x)
@@ -191,10 +193,9 @@ def amg_2_v(A, P, b, x,
             e = la.norm(x, 2)
 
         # tol check
-        err.append(e)
+        err[i] = e
         if e <= tol:
-            break
-        if len(err) >= max_iter:
+            err = err[:i+1]
             break
 
     if len(err) != 1:
