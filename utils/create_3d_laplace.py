@@ -77,7 +77,9 @@ def gen_aniso_laplace(Nx, Ny, Nz, theta_y, theta_z, eps_x, eps_y):
 
 
 for i in range(args.n_grids):
-    N = np.random.randint(8, 15)
+    Nx = np.random.randint(8, 15)
+    Ny = np.random.randint(8, 15)
+    Nz = np.random.randint(8, 15)
 
     if args.anisotropic:
         theta_z = np.random.uniform(0, 2*np.pi)
@@ -90,7 +92,7 @@ for i in range(args.n_grids):
         eps_x = 1.
         eps_y = 1.
 
-    A, x = gen_aniso_laplace(N, N, N, theta_y, theta_z, eps_x, eps_y)
+    A, x = gen_aniso_laplace(Nx, Ny, Nz, theta_y, theta_z, eps_x, eps_y)
     G = Grid(A, x=x, extra={
         'theta_z': theta_z,
         'theta_y': theta_y,
@@ -98,6 +100,9 @@ for i in range(args.n_grids):
         'eps_y': eps_y,
         'eps_z': 1.,
         'dim': 3,
+        'Nx': Nx,
+        'Ny': Ny,
+        'Nz': Nz
     })
     print(i, G.A.shape[0])
     G.save(os.path.join(args.out_folder, f'{i:04}'))

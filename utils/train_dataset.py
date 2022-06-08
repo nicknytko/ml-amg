@@ -26,6 +26,7 @@ import ns.lib.graph
 import ns.ga.parga
 import ns.ga.torch
 import ns.parallel.pool
+import ns.lib.profiler
 
 import common
 
@@ -45,6 +46,8 @@ parser.add_argument('--batch-size', type=int, default=64)
 parser.add_argument('--loss-relative-measure', type=common.parse_bool_str, default=True)
 parser.add_argument('--cuda', type=common.parse_bool_str, default=False)
 parser.add_argument('--evaluate-bench-loss', type=common.parse_bool_str, default=True)
+
+ns.lib.profiler.Profiler.enabled = False
 
 args = parser.parse_args()
 
@@ -67,10 +70,9 @@ train_benchmark = np.ones(len(train))
 test_benchmark = train_benchmark
 
 device = ('cuda' if args.cuda else 'cpu')
-model = ns.model.agg_interp.FullAggNet(64, num_conv=2, iterations=4).to(device)
+model = ns.model.agg_interp.FullAggNet(8, num_conv=2, iterations=2).to(device)
 batch_size = args.batch_size
 writer = None
-
 
 def evaluate_dataset(weights, dataset, model=None, alpha=0.3, omega=2./3.):
     model.load_state_dict(ns.ga.torch.model_weights_as_dict(model, weights))
@@ -121,8 +123,8 @@ def fitness(generation, weights, weights_idx):
             batch = train
             batch_ref_conv = train_benchmark
     else:
-        batch = train[::8]
-        batch_ref_conv = train_benchmark[::8]
+        batch = train
+        batch_ref_conv = train_benchmark
 
     raw_conv = evaluate_dataset(weights, batch, model, alpha=args.alpha)
     if args.loss_relative_measure:
@@ -172,8 +174,8 @@ def display_progress(ga_instance):
         batch = [train[i] for i in batch_indices]
         batch_ref_conv = train_benchmark[batch_indices]
     else:
-        batch = train[::8]
-        batch_ref_conv = train_benchmark[::8]
+        batch = train
+        batch_ref_conv = train_benchmark
 
     # Compute test loss
     if args.compute_test_loss:
@@ -240,9 +242,9 @@ with ns.parallel.pool.WorkerPool(args.workers) as pool:
         selection='greedy'
         mutation_prob = 1.0
     else:
-        perturb_val = 0.005
+        perturb_val = 0.5
         selection='steady_state'
-        mutation_prob=0.5
+        mutation_prob=1.0
 
     ga_instance = ns.ga.parga.ParallelGA(initial_population=initial_population,
                                          fitness_func=fitness,

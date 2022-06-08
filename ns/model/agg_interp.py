@@ -8,7 +8,7 @@ import ns.lib.sparse as sparse
 import ns.model.data
 import ns.lib.graph
 import pyamg
-# from ns.lib.helpers import topk_vec
+from ns.lib.profiler import Profiler
 
 
 def topk_vec(x, k):
@@ -132,18 +132,23 @@ class MPNN(nn.Module):
         row = edge_index[0]
         col = edge_index[1]
 
-        # input convolution
-        x = nnF.relu(self.node_conv_in(self.normalize_in(x), edge_index, abs(edge_attr))) + x
-        edge_attr = nnF.relu(self.edge_conv_in(x[row], x[col], edge_attr.float())) + edge_attr
+        with Profiler('input convolution'):
+            # input convolution
+            x = nnF.relu(self.node_conv_in(self.normalize_in(x), edge_index, abs(edge_attr))) + x
+            edge_attr = nnF.relu(self.edge_conv_in(x[row], x[col], edge_attr.float())) + edge_attr
 
         # middle convolutions
         for i in range(self.num_internal_conv):
-            x = nnF.relu(self.node_convs[i](self.normalizations[i](x), edge_index, edge_attr)) + x
-            edge_attr = nnF.relu(self.edge_convs[i](x[row], x[col], edge_attr.float())) + edge_attr
+            with Profiler(f'convolution {i}'):
+                with Profiler('node convolution'):
+                    x = nnF.relu(self.node_convs[i](self.normalizations[i](x), edge_index, edge_attr)) + x
+                with Profiler('edge convolution'):
+                    edge_attr = nnF.relu(self.edge_convs[i](x[row], x[col], edge_attr.float())) + edge_attr
 
-        # output convolution
-        x = self.node_activation(self.node_conv_out(self.normalize_out(x), edge_index, edge_attr))
-        edge_attr = self.edge_activation(self.edge_conv_out(x[row], x[col], edge_attr.float()))
+        with Profiler('output convolution'):
+            # output convolution
+            x = self.node_activation(self.node_conv_out(self.normalize_out(x), edge_index, edge_attr))
+            edge_attr = self.edge_activation(self.edge_conv_out(x[row], x[col], edge_attr.float()))
 
         return x, edge_attr
 
@@ -453,36 +458,40 @@ class FullAggNet(nn.Module):
         node_weights : torch.Tensor
           Value of each node when scoring is applied to pick centers.
         '''
-        import time
+        from time import time
 
-        m, n = A.shape
-        k = int(np.ceil(alpha * m))
-        data_simple = ns.model.data.graph_from_matrix_basic(A).to(self.device)
+        with Profiler('creating data'):
+            m, n = A.shape
+            k = int(np.ceil(alpha * m))
+            data_simple = ns.model.data.graph_from_matrix_basic(A).to(self.device)
 
-        # Compute node scores
-        node_scores = self.AggNet(data_simple, k).squeeze()
-        top_k = torch.where(node_scores == 1)[0]
+        with Profiler('computing node scores'):
+            # Compute node scores
+            node_scores = self.AggNet(data_simple, k).squeeze()
+            top_k = torch.where(node_scores == 1)[0]
 
-        # Output Bellman-ford weights
-        BF_nodes, BF_edges = self.CNet(data_simple)
-        #C_T = torch.sparse_coo_tensor(data_simple.edge_index, BF_edges.squeeze(), (m, n)).coalesce()
-        edge_indices = data_simple.edge_index.cpu().numpy()
-        edge_weights = BF_edges.squeeze().cpu().numpy()
-        C = sp.coo_matrix((edge_weights, (edge_indices[0], edge_indices[1])), shape=(m, n))
-        C_T = ns.lib.sparse.scipy_to_torch(C)
+        with Profiler('computing bellman-ford weights'):
+            # Output Bellman-ford weights
+            BF_nodes, BF_edges = self.CNet(data_simple)
+            #C_T = torch.sparse_coo_tensor(data_simple.edge_index, BF_edges.squeeze(), (m, n)).coalesce()
+            edge_indices = data_simple.edge_index.cpu().numpy()
+            edge_weights = BF_edges.squeeze().cpu().numpy()
+            C = sp.coo_matrix((edge_weights, (edge_indices[0], edge_indices[1])), shape=(m, n))
+            C_T = ns.lib.sparse.scipy_to_torch(C)
 
-        # Run Bellman-Ford to assign each node to an aggregate
-        distance, nearest_center = pyamg.graph.bellman_ford(C, top_k.cpu().numpy())
-        agg_T = ns.lib.graph.nearest_center_to_agg(top_k, nearest_center).to(self.device)
+        with Profiler('running bellman-ford'):
+            # Run Bellman-Ford to assign each node to an aggregate
+            distance, nearest_center = pyamg.graph.bellman_ford(C, top_k.cpu().numpy())
+            agg_T = ns.lib.graph.nearest_center_to_agg(top_k, nearest_center).to(self.device)
 
-        # Compute the smoother \hat{P}
-        t = time.time()
-        data = ns.model.data.graph_from_matrix(A, ns.lib.sparse_tensor.to_scipy(agg_T.detach())).to(self.device)
-        nodes, edges = self.PNet(data)
-        P_hat = torch.sparse_coo_tensor(data.edge_index, edges.squeeze(), (m, n), device=self.device).coalesce()
+        with Profiler('computing smoother'):
+            # Compute the smoother \hat{P}
+            data = ns.model.data.graph_from_matrix(A, ns.lib.sparse_tensor.to_scipy(agg_T.detach())).to(self.device)
+            nodes, edges = self.PNet(data)
+            P_hat = torch.sparse_coo_tensor(data.edge_index, edges.squeeze(), (m, n), device=self.device).coalesce()
 
-        # Now, form P := \hat{P} Agg.
-        t = time.time()
-        P_T = torch.sparse.mm(P_hat, agg_T).coalesce()
-        torch.cuda.synchronize()
+        with Profiler('smoothing aggregates'):
+            # Now, form P := \hat{P} Agg.
+            P_T = torch.sparse.mm(P_hat, agg_T).coalesce()
+        # torch.cuda.synchronize()
         return agg_T, P_T, C_T, top_k, node_scores
