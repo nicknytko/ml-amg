@@ -46,13 +46,17 @@ parser.add_argument('--batch-size', type=int, default=64)
 parser.add_argument('--loss-relative-measure', type=common.parse_bool_str, default=True)
 parser.add_argument('--cuda', type=common.parse_bool_str, default=False)
 parser.add_argument('--evaluate-bench-loss', type=common.parse_bool_str, default=True)
+parser.add_argument('--pre-smooth', type=int, default=1)
+parser.add_argument('--post-smooth', type=int, default=1)
 
-ns.lib.profiler.Profiler.enabled = False
+ns.lib.profiler.Profiler.enabled = True
 
 args = parser.parse_args()
 
 greedy = args.greedy
 batched = args.batched
+num_pre_relax = args.pre_smooth
+num_post_relax = args.post_smooth
 
 # Use train/ and test/ dir if they exist in the system folder.  Otherwise, train=test=system
 train_dir = os.path.join(args.system, 'train')
@@ -85,12 +89,14 @@ def evaluate_dataset(weights, dataset, model=None, alpha=0.3, omega=2./3.):
             A_T = ns.lib.sparse.scipy_to_torch(A).to(model.device)
         n = A.shape[1]
         b = np.zeros(n)
+        P = None
 
         try:
             with torch.no_grad():
-                agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
-                if not args.cuda:
-                    P = ns.lib.sparse.torch_to_scipy(P_T)
+                P_T = None
+                with ns.lib.profiler.Profiler('model inferencing'):
+                    agg_T, P_T, bf_weights, cluster_centers, node_scores = model.forward(A, alpha)
+                P = ns.lib.sparse.torch_to_scipy(P_T)
         except Exception as e:
             print(f'Could not evaluate grid {i}: {traceback.format_exc()}')
             conv[i] = 1.0
@@ -98,15 +104,14 @@ def evaluate_dataset(weights, dataset, model=None, alpha=0.3, omega=2./3.):
 
         x = np.random.RandomState(0).randn(A.shape[1])
         x /= la.norm(x, 2)
-        if args.cuda:
-            t = time.time()
+        #if args.cuda:
+        if False:
             b = torch.zeros(A.shape[1]).to(model.device)
             x = torch.Tensor(x).to(model.device)
-            res = ns.lib.multigrid.amg_2_v_torch(A_T, P_T, b, x, error_tol=1e-6, jacobi_weight=omega)
+            res = ns.lib.multigrid.amg_2_v_torch(A_T, P_T, b, x, error_tol=1e-6, jacobi_weight=omega, pre_smoothing_steps=num_pre_relax, post_smoothing_steps=num_post_relax)
         else:
-            t = time.time()
             b = np.zeros(A.shape[1])
-            res = ns.lib.multigrid.amg_2_v(A, P, b, x, error_tol=1e-6)[1]
+            res = ns.lib.multigrid.amg_2_v(A, P, b, x, error_tol=1e-6, pre_smoothing_steps=num_pre_relax, post_smoothing_steps=num_post_relax)[1]
         conv[i] = res
     conv[torch.isnan(conv)] = 1.
     return conv

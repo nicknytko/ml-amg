@@ -2,7 +2,7 @@ import numpy as np
 import ns.optimize.base_optimizer
 
 
-class SPSAOptimizer(BaseGradientApproximationOptimizer):
+class SPSAOptimizer(ns.optimize.base_optimizer.BaseGradientApproximationOptimizer):
     '''
     An approximation to the gradient of a loss function using
     Simultaneous perturbation stochastic approximations.
@@ -18,4 +18,4 @@ class SPSAOptimizer(BaseGradientApproximationOptimizer):
         delta_n = np.random.choice([1., -1.], size=len(self.x), replace=True)
         f = self._loss(x + delta_n * self.c)
         b = self._loss(x - delta_n * self.c)
-        return (f-b) / (2*c*delta_n)
+        return (f-b) / (2*self.c*delta_n)

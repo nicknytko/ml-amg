@@ -6,10 +6,29 @@ import matplotlib.axes
 import matplotlib.cm
 import mpl_toolkits.mplot3d.art3d
 import mpl_toolkits.mplot3d.axes3d
+import scipy.sparse as sp
+import torch
+import networkx as nx
 
 import skimage.measure
 
+
+'''
+This file contains a wrapper around matplotlib that grabs a background thread/process for plotting,
+allowing you to do expensive computations on the main thread and have an interactive plot (i.e. for
+showing progress); the interactive plot will remain responsive because it runs on a separate thread.
+'''
+
 def _plot_thread(pipe):
+    '''
+    Main loop for the plot process
+
+    Parameters
+    ----------
+    pipe : multiprocessing.Pipe
+      Communication pipe to send/recv info from main process
+    '''
+
     plt.ion()
     plt.figure()
     plt.show()
@@ -33,6 +52,17 @@ def _plot_thread(pipe):
 
 
 def plot_agg_3d(grid, AggOp):
+    '''
+    Plot aggregates in 3D using a scatter plot
+
+    Parameters
+    ----------
+    grid : ns.model.data.Grid
+      Grid object to plot
+    AggOp : scipy.sparse.spmatrix
+      (n, n_k) binary aggregate assignment matrix
+n    '''
+
     agg_assign = np.array(AggOp.argmax(axis=1)).flatten()
     colors = np.array(['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'])
     agg_colors = colors[agg_assign % len(colors)].tolist()
@@ -40,6 +70,19 @@ def plot_agg_3d(grid, AggOp):
 
 
 def plot_3d_grid_voxel(grid, u):
+    '''
+    Plot a scalar field using a 3D voxel mesh.
+    Requires structured, rectangular geometry otherwise this may break horribly.
+
+    Parameters
+    ----------
+    grid : ns.model.data.Grid
+      Grid object to plot
+    u : np.ndarray
+      (Nx * Ny * Nz, ) length array containing scalar information
+      Entries should be in the same ordering as grid.x
+    '''
+
     xs = np.sort(grid.x[:,0])
     ys = np.sort(grid.x[:,1])
     zs = np.sort(grid.x[:,2])
@@ -65,6 +108,20 @@ def plot_3d_grid_voxel(grid, u):
 
 
 def plot_agg_3d_voxel(grid, AggOp, opacity=0.5):
+    '''
+    Plot aggregate assignments using a 3D voxel mesh.
+    Requires structured, rectangular geometry otherwise this may break horribly.
+
+    Parameters
+    ----------
+    grid : ns.model.data.Grid
+      Grid object to plot
+    AggOp : scipy.sparse.spmatrix
+      (n, n_k) binary aggregate assignment matrix
+    opacity : float
+      Opacity of the aggregates.  Should range between 0 (totally invisible) to 1 (totally opaque).
+    '''
+
     agg_assign = np.array(AggOp.argmax(axis=1)).flatten()
     colors_rgb = np.array([
         [31, 119, 180],  #1f77b4
@@ -105,14 +162,79 @@ def plot_agg_3d_voxel(grid, AggOp, opacity=0.5):
         Agg = np.array(AggOp[:, agg].todense(), dtype=bool).flatten()
         col = colors_rgba[agg % colors_rgba.shape[0]]
         ax.voxels(xx, yy, zz, Agg.reshape((Nx, Ny, Nz)), facecolors=col)
-        # verts, faces, normals, values = skimage.measure.marching_cubes(Agg.reshape((Nx, Ny, Nz)), mask=(Agg==1).reshape((Nx,Ny,Nz)))
-        # mesh = mpl_toolkits.mplot3d.art3d.Poly3DCollection(verts[faces])
-        # mesh.set_edgecolor('k')
-        # ax.add_collection3d(mesh)
 
     ax.set_xlabel('x')
     ax.set_ylabel('y')
     ax.set_zlabel('z')
+
+
+def plot_agg_2d(grid, **kwargs):
+    '''
+    Plot aggregate assignments in 2D with the classic blobby aggregates.
+
+    Parameters
+    ----------
+    grid : ns.model.data.Grid
+      Grid object to plot
+
+    Keyword Parameters
+    ------------------
+    edge_values : np.ndarray (optional)
+      Scalar value per each edge of the graph
+    node_values : np.ndarray / torch.Tensor (optional)
+      Scalar value per each node of the graph
+    interpolation : scipy.sparse.spmatrix / torch.Tensor (optional)
+      Interpolation operator used to draw the "spider plot".
+      Omit if you don't want to draw the aggregate-to-node visualization.
+    aggregation : scipy.sparse.spmatrix (optional)
+      (n, n_k) binary aggregate assignment matrix.  Required if you want to draw interpolation.
+    cluster_centers : np.ndarray (optional)
+      (n_k,) array containing node indices that are centers of the clusters.
+    '''
+
+    graph = grid.networkx
+    graph.remove_edges_from(list(nx.selfloop_edges(graph)))
+    positions = {}
+    for node in graph.nodes:
+        positions[node] = grid.x[node]
+
+    edge_values = np.ones(len(graph.edges))
+    if 'edge_values' in kwargs:
+        for i, edge in enumerate(graph.edges):
+            edge_values[i] = kwargs['edge_values'][edge]
+
+    node_values = np.ones(len(graph.nodes))
+    if 'node_values' in kwargs:
+        if isinstance(kwargs['node_values'], torch.Tensor):
+            node_values = kwargs['node_values'].detach().cpu().numpy()
+        #node_values = np.log10(node_values + 1)
+
+    interpolation = None
+    if 'interpolation' in kwargs:
+        if not isinstance(kwargs['interpolation'], sp.spmatrix):
+            interpolation = ns.lib.sparse.torch_to_scipy(kwargs['interpolation'])
+        else:
+            interpolation = kwargs['interpolation']
+
+    nx.drawing.nx_pylab.draw_networkx(graph, ax=plt.gca(),
+                                      pos=positions,
+                                      arrows=False,
+                                      with_labels=False,
+                                      node_size=kwargs.get('node_size', 60),
+                                      edge_color=edge_values,
+                                      node_color=node_values,
+                                      vmin=np.min(node_values),
+                                      vmax=np.max(node_values))
+    if 'aggregation' in kwargs:
+        grid.plot_agg(kwargs['aggregation'], alpha=0.1, edgecolor='0.2')
+        if interpolation is not None:
+            grid.plot_spider_agg(kwargs['aggregation'], interpolation)
+
+    if 'cluster_centers' in kwargs:
+        cluster_centers = kwargs['cluster_centers']
+        plt.plot(grid.x[cluster_centers, 0], grid.x[cluster_centers, 1], 'y*', markersize=10)
+
+    plt.gca().set_aspect('equal')
 
 
 def create_axes(*args, **kwargs):
@@ -140,10 +262,12 @@ def scatter3D_wrapper(*args, **kwargs):
         plt.gca().scatter3D(*args, **kwargs)
 
 
+''' Custom functionality added to the ThreadedPlot class '''
 plot_funcs = {
     'plot_agg_3d': plot_agg_3d,
     'plot_3d_grid_voxel': plot_3d_grid_voxel,
     'plot_agg_3d_voxel': plot_agg_3d_voxel,
+    'plot_agg_2d': plot_agg_2d,
     'scatter3D': scatter3D_wrapper,
     'create_axes': create_axes,
     'clear': clear,
@@ -173,6 +297,8 @@ class ThreadedPlot:
     '''
     Class that wraps a matplotlib axes object in a separate process, allowing
     the main thread/process to do calculations while keeping the figure window responsive.
+
+    All methods in matplotlib.axes.Axes and Axes3D are exposed and can be directly used.
     '''
 
     def __init__(self):

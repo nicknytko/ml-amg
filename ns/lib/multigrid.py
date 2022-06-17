@@ -218,33 +218,28 @@ def amg_2_v_torch(A, P, b, x,
             max_iter=20):
     device = A.device
     Dinv = 1./ns.lib.sparse.get_diagonal(A)
-    # U = ns.lib.sparse.triu(A, 1)
     Pt = P.transpose(0, 1)
     A_H = torch.sparse.mm(torch.sparse.mm(Pt, A), P).to_dense()
     A_H_LU = torch.lu(A_H)
-    # A_H_LU = tla.lu_factor(A_H)
 
     err = torch.zeros(max_iter).to(device)
 
     for i in range(max_iter):
         # pre-relaxation
         x = jacobi_torch(A, b, x, Dinv, omega=jacobi_weight, nu=pre_smoothing_steps)
-        # x = gauss_seidel_torch(A, b, x, U, nu=pre_smoothing_steps)
 
         # coarse-grid correction
         r_H = torch.unsqueeze(Pt.matmul(b - A@x), 1)
         e_H = torch.lu_solve(r_H, *A_H_LU)
-        # e_H = tla.lu_solve(*A_H_LU, r_H)
         x += P.matmul(e_H.squeeze())
 
         # post-relaxation
         x = jacobi_torch(A, b, x, Dinv, omega=jacobi_weight, nu=post_smoothing_steps)
-        # x = gauss_seidel_torch(A, b, x, U, nu=post_smoothing_steps)
 
         # tolerance check
         err[i] = tla.norm(x)
         if err[i] < error_tol:
             break
 
-    n_err = 2
+    n_err = 3
     return (err[i] / err[i-n_err]) ** (1/(n_err - 1))

@@ -6,15 +6,15 @@ class BaseGradientFreeOptimizer(abc.ABC):
     def __init__(self):
         pass
 
-    @abstractmethod
+    @abc.abstractmethod
     def step(self):
         pass
 
-    @abstractmethod
+    @abc.abstractmethod
     def solution(self):
         return None
 
-    @abstractmethod
+    @abc.abstractmethod
     def iteration(self):
         return 0
 
@@ -22,7 +22,7 @@ class BaseGradientFreeOptimizer(abc.ABC):
 class BaseGradientApproximationOptimizer(BaseGradientFreeOptimizer):
     def __init__(self, x, lr=1e-4, betas=(0.9, 0.999), eps=1e-8, loss_func=None, loss_args=None):
         self.lr = lr
-        self.x = x
+        self.x = x.copy()
         self.m = np.zeros_like(x)
         self.v = np.zeros_like(x)
         self.betas = betas
@@ -36,16 +36,16 @@ class BaseGradientApproximationOptimizer(BaseGradientFreeOptimizer):
 
     def _loss(self, x):
         if self.loss_args:
-            return self.loss_func(x, *self.fitness_args)
+            return self.loss_func(x, *self.loss_args)
         else:
             return self.loss_func(x)
 
-    @abstractmethod
+    @abc.abstractmethod
     def _gradient(self, x):
         return x
 
     def step(self):
-        grad = self.gradient(self.x)
+        grad = self._gradient(self.x)
         beta1, beta2 = self.betas
 
         self.m = beta1 * self.m + (1-beta1) * grad
@@ -54,7 +54,7 @@ class BaseGradientApproximationOptimizer(BaseGradientFreeOptimizer):
         mbar = self.m / (1 - beta1 ** (self.it+1))
         vbar = self.v / (1 - beta2 ** (self.it+1))
 
-        x = x - self.lr * mbar / (np.sqrt(vbar) + self.eps)
+        self.x = self.x - self.lr * mbar / (np.sqrt(vbar) + self.eps)
         self.it += 1
 
     def solution(self):
@@ -96,7 +96,7 @@ class BaseEvolutionaryOptimizer(BaseGradientFreeOptimizer):
         self.population_fitness[to_compute] = self._compute_fitness_on_population(self.generation, self.population[to_compute])
         self.population_computed_fitness[to_compute] = True
 
-    @abstractmethod
+    @abc.abstractmethod
     def step(self):
         self.generation += 1
 

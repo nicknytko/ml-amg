@@ -69,9 +69,13 @@ def model_weights_as_dict(model, weights_vector):
     Convert flattened vector of model weights back into torch state dict
     '''
 
+    device = 'cpu'
+    if hasattr(model, 'device'):
+        device = model.device
+
     state_dict = model.state_dict()
     cur_spot = 0
-    weights_vector = torch.Tensor(weights_vector).to(model.device)
+    weights_vector = torch.Tensor(weights_vector).to(device)
 
     for key in state_dict.keys():
         weights = state_dict[key].detach()
